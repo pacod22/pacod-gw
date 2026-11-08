@@ -172,9 +172,9 @@ pub struct Subjects<'a> {
     /// A plugin's own call (`docs/plugin-concept.md`, section 3.8): limits that count requests,
     /// and those of a key, do not apply. Its tokens and spend count like any call's.
     pub internal: bool,
-    /// A tool call: the tool server's name and the tool's own name. Only limits of tool calls
-    /// apply to it, and those apply to nothing else.
-    pub tool: Option<(&'a str, &'a str)>,
+    /// A call of a tool or a remote agent. Only limits of tool calls apply to it, and those
+    /// apply to nothing else.
+    pub tool: Option<crate::tools::grant::Callee<'a>>,
     /// The id of the registered agent the call is made for.
     pub agent: Option<&'a str>,
 }
@@ -239,9 +239,8 @@ impl LimitEngine {
                 continue;
             }
             match s.tool {
-                Some((server, tool)) => {
-                    let matches =
-                        |e: &String| crate::tools::grant::Item::parse(e).is_ok_and(|i| i.matches(server, tool));
+                Some(callee) => {
+                    let matches = |e: &String| crate::tools::grant::Item::parse(e).is_ok_and(|i| i.matches(callee));
                     if spec.metric != Metric::ToolCalls || (!f.tools.is_empty() && !f.tools.iter().any(matches)) {
                         continue;
                     }

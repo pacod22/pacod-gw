@@ -231,6 +231,7 @@ pub fn build() -> (Router<AdminState>, Value) {
     v1 = broker_offer::routes(v1, &mut api);
     v1 = resources::tools::routes(v1, &mut api);
     v1 = resources::agent::routes(v1, &mut api);
+    v1 = resources::a2a::routes(v1, &mut api);
     let doc = api.finish(env!("CARGO_PKG_VERSION"));
     let dry_runs = Arc::new(dry_run_operations(&doc));
     let v1 = v1.route_layer(axum::middleware::from_fn(

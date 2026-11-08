@@ -127,6 +127,30 @@ pub struct OrgRt {
     pub catalogues: HashMap<String, CatalogueRt>,
     /// The organisation's active tool servers, by name.
     pub tool_servers: HashMap<String, Arc<ToolServerRt>>,
+    /// The organisation's active remote agents, by name.
+    pub remote_agents: HashMap<String, Arc<RemoteAgentRt>>,
+}
+
+/// A remote agent as callers are served by it: its current credentials, opened, and its card
+/// as approved. Without an approved card that is not held it serves nobody.
+#[derive(Debug)]
+pub struct RemoteAgentRt {
+    pub id: String,
+    pub organisation_id: String,
+    pub doc: crate::model::RemoteAgent,
+    pub credential: Option<Arc<Secret>>,
+    pub workspace_credentials: HashMap<String, Arc<Secret>>,
+    pub card: Option<crate::model::AgentCardPin>,
+}
+
+impl RemoteAgentRt {
+    pub fn open_to(&self, workspace_id: &str) -> bool {
+        self.doc.workspaces.as_ref().is_none_or(|ws| ws.iter().any(|w| w == workspace_id))
+    }
+
+    pub fn credential_for(&self, workspace_id: &str) -> Option<&Arc<Secret>> {
+        self.workspace_credentials.get(workspace_id).or(self.credential.as_ref())
+    }
 }
 
 /// A tool server as callers are served by it: its current credentials, opened, and the tools

@@ -3289,6 +3289,146 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orgs/{org}/remote-agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List remote agents */
+        get: operations["listRemoteAgent"];
+        put?: never;
+        /** Create a remote agent */
+        post: operations["createRemoteAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a remote agent */
+        get: operations["getRemoteAgent"];
+        /** Replace a remote agent */
+        put: operations["replaceRemoteAgent"];
+        post?: never;
+        /** Delete a remote agent */
+        delete: operations["deleteRemoteAgent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a remote agent's credentials (no secrets) */
+        get: operations["listRemoteAgentCredentials"];
+        put?: never;
+        /** Add or rotate a remote agent's credential */
+        post: operations["createRemoteAgentCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/credentials/{cid}/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make a credential current or disable it */
+        post: operations["setRemoteAgentCredentialState"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/credentials/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a remote agent's credential */
+        delete: operations["deleteRemoteAgentCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's card: as it serves it, and as approved */
+        get: operations["getRemoteAgentCard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read the agent's card now */
+        post: operations["probeRemoteAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{org}/remote-agents/{id}/card/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve the agent's card as it serves it now */
+        post: operations["approveRemoteAgentCard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6375,8 +6515,9 @@ export interface components {
              */
             intents?: string[];
             /**
-             * @description Tool calls only: the tools that count, as bundles name them (`mcp:<server>/*`,
-             *     `mcp:<server>/<tool>`; the broker's tools are `mcp:broker/...`).
+             * @description Tool calls only: the tools and remote agents that count, as bundles name them
+             *     (`mcp:<server>/*`, `mcp:<server>/<tool>`, `a2a:<agent>`; the broker's tools are
+             *     `mcp:broker/...`).
              */
             tools?: string[];
         };
@@ -9854,6 +9995,153 @@ export interface components {
             object: components["schemas"]["Item24"];
             /** @description What else the change would do. */
             effects: string[];
+        };
+        /** @description An object as the API returns it: the common columns plus the resource's view. */
+        Item25: {
+            id: string;
+            /**
+             * Format: int32
+             * @description Incremented on every update. Send it back on update to detect concurrent changes.
+             */
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /**
+             * @description Slug, unique in the organisation, at most 20 characters and starting with a letter:
+             *     callers reach the agent at `/a2a/{name}`, and bundles grant it as `a2a:{name}`. It
+             *     cannot change.
+             */
+            name: string;
+            /** @default  */
+            description: string;
+            /** @description Where the agent's card is: usually `https://…/.well-known/agent-card.json`. */
+            card_url: string;
+            /**
+             * @description How the gateway presents the agent's credential. Without a current credential nothing
+             *     is sent.
+             * @default {
+             *       "header": "authorization",
+             *       "prefix": "Bearer "
+             *     }
+             */
+            auth: components["schemas"]["ToolAuth"];
+            /**
+             * Format: uint32
+             * @description The time a request to the agent may take, in milliseconds (1000 to 600000), a stream
+             *     included.
+             * @default 120000
+             */
+            timeout_ms: number;
+            /**
+             * Format: uint32
+             * @description The largest answer passed on, or the largest event of a stream, in bytes (1 KiB to
+             *     16 MiB). A larger one is refused, never cut.
+             * @default 4194304
+             */
+            max_bytes: number;
+            /** @description The organisation's workspaces whose callers may use the agent. Unset: every workspace. */
+            workspaces?: string[] | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        RemoteAgent: {
+            /**
+             * @description Slug, unique in the organisation, at most 20 characters and starting with a letter:
+             *     callers reach the agent at `/a2a/{name}`, and bundles grant it as `a2a:{name}`. It
+             *     cannot change.
+             */
+            name: string;
+            /** @default  */
+            description: string;
+            /** @description Where the agent's card is: usually `https://…/.well-known/agent-card.json`. */
+            card_url: string;
+            /**
+             * @description How the gateway presents the agent's credential. Without a current credential nothing
+             *     is sent.
+             * @default {
+             *       "header": "authorization",
+             *       "prefix": "Bearer "
+             *     }
+             */
+            auth: components["schemas"]["ToolAuth"];
+            /**
+             * Format: uint32
+             * @description The time a request to the agent may take, in milliseconds (1000 to 600000), a stream
+             *     included.
+             * @default 120000
+             */
+            timeout_ms: number;
+            /**
+             * Format: uint32
+             * @description The largest answer passed on, or the largest event of a stream, in bytes (1 KiB to
+             *     16 MiB). A larger one is refused, never cut.
+             * @default 4194304
+             */
+            max_bytes: number;
+            /** @description The organisation's workspaces whose callers may use the agent. Unset: every workspace. */
+            workspaces?: string[] | null;
+            /** @default active */
+            status: components["schemas"]["Status"];
+        };
+        /** @description What a change would do. Nothing was changed. */
+        DryRun21: {
+            /** @description Always false. */
+            applied: boolean;
+            /** @description The object as it would be after the change; for a deletion, as it is. */
+            object: components["schemas"]["Item25"];
+            /** @description What else the change would do. */
+            effects: string[];
+        };
+        /** @description What the gateway knows of an agent's card. */
+        CardView: {
+            /** @description The last probe; `null` before the first. */
+            probe?: components["schemas"]["ProbeRunView"] | null;
+            /**
+             * @description `new` (never approved), `approved`, `changed` (the agent serves another card than the
+             *     approved one: held), or `disabled`.
+             */
+            status: components["schemas"]["ToolStatus"];
+            seen?: components["schemas"]["SeenCardView"] | null;
+            pin?: components["schemas"]["AgentCardPin"] | null;
+        };
+        SeenCardView: {
+            /** @description The card as the agent serves it now, without its signatures. */
+            card: unknown;
+            hash: string;
+            interface_url: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+        };
+        /**
+         * @description A remote agent's card as an administrator approved it. Callers are served this card,
+         *     rewritten to the gateway, not what the agent says now; a probe that finds the card changed
+         *     holds the agent until it is approved again.
+         */
+        AgentCardPin: {
+            /** @description The card as approved, without its signatures, which the gateway's rewriting would break. */
+            card: unknown;
+            /** @description `sha256:` and the hash of the canonical card. */
+            hash: string;
+            /** @description The card's JSON-RPC interface of version 1.0, where the gateway calls the agent. */
+            interface_url: string;
+            /** @description The `tenant` that interface declares, which every request must carry. */
+            tenant?: string | null;
+            /** @default approved */
+            state: components["schemas"]["PinState"];
+            approved_by: string;
+            /** Format: date-time */
+            approved_at: string;
+        };
+        ApproveCardInput: {
+            /**
+             * @description The hash of the card approved, as the card view shows it. When the agent served another
+             *     card since, the approval is refused (`409`).
+             */
+            hash: string;
         };
         Error: {
             error: {
@@ -20556,6 +20844,441 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listRemoteAgent: {
+        parameters: {
+            query?: {
+                /** @description Continue a listing: the `next_cursor` of the previous page. */
+                cursor?: string;
+                /** @description Page size, 1 to 500. Default 100. */
+                limit?: number;
+                /** @description id (default), name, created_at or updated_at. */
+                sort?: string;
+                /** @description asc (default) or desc. */
+                order?: string;
+                /** @description Only objects whose name contains this, in any case. */
+                q?: string;
+                /** @description Only objects with this status (for models: this state). */
+                status?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Item25"][];
+                        /** @description Pass as `cursor` to get the next page. */
+                        next_cursor?: string | null;
+                    };
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createRemoteAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoteAgent"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item25"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRemoteAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item25"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceRemoteAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the change and answer what it would be, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoteAgent"] & {
+                    /** @description The version the caller last read. When given, the replace is refused with 409 if the object has changed since. */
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item25"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteRemoteAgent: {
+        parameters: {
+            query?: {
+                /** @description true: check the deletion and answer what it would do, without making it. */
+                dry_run?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A dry run: what the deletion would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DryRun21"];
+                };
+            };
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listRemoteAgentCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createRemoteAgentCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCredentialInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setRemoteAgentCredentialState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCredentialStateInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item23"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteRemoteAgentCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRemoteAgentCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    probeRemoteAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    approveRemoteAgentCard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveCardInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardView"];
+                };
             };
             /** @description Error */
             default: {

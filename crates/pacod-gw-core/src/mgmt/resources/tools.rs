@@ -52,6 +52,26 @@ const RESERVED_HEADERS: [&str; 9] = [
     "a2a-version",
 ];
 
+/// Checks the header a credential is sent in, and writes its name in lower case.
+pub(super) fn check_auth(auth: &mut crate::model::ToolAuth) -> ApiResult<()> {
+    let header = auth.header.trim().to_ascii_lowercase();
+    if axum::http::HeaderName::from_bytes(header.as_bytes()).is_err()
+        || RESERVED_HEADERS.contains(&header.as_str())
+        || header.starts_with("content-")
+        || header.starts_with("mcp-")
+        || header.starts_with("a2a-")
+    {
+        return Err(ApiError::invalid(format!(
+            "auth.header: {header:?} cannot carry the credential; use authorization or a header of the server's own"
+        )));
+    }
+    auth.header = header;
+    if auth.prefix.chars().any(|c| c.is_control()) {
+        return Err(ApiError::invalid("auth.prefix must not hold control characters"));
+    }
+    Ok(())
+}
+
 impl Resource for ToolServer {
     const PLURAL: &'static str = "tool-servers";
     const LABEL: &'static str = "tool server";
@@ -77,20 +97,7 @@ impl Resource for ToolServer {
         let hub =
             ctx.st.gw.tools.as_ref().ok_or_else(|| ApiError::unavailable("this gateway calls no tool servers"))?;
         hub.egress.check_url(&input.url).map_err(|e| ApiError::invalid(format!("url: {e}")))?;
-        let header = input.auth.header.trim().to_ascii_lowercase();
-        if axum::http::HeaderName::from_bytes(header.as_bytes()).is_err()
-            || RESERVED_HEADERS.contains(&header.as_str())
-            || header.starts_with("content-")
-            || header.starts_with("mcp-")
-        {
-            return Err(ApiError::invalid(format!(
-                "auth.header: {header:?} cannot carry the credential; use authorization or a header of the server's own"
-            )));
-        }
-        input.auth.header = header;
-        if input.auth.prefix.chars().any(|c| c.is_control()) {
-            return Err(ApiError::invalid("auth.prefix must not hold control characters"));
-        }
+        check_auth(&mut input.auth)?;
         if !(1_000..=300_000).contains(&input.timeout_ms) {
             return Err(ApiError::invalid("timeout_ms must be between 1000 and 300000"));
         }
@@ -277,16 +284,49 @@ async fn server_of(
     Ok(server)
 }
 
-/// Whether the principal may manage credentials of `scope` for `server`: the organisation's
-/// administrators for its own, a workspace's for the workspace's, of a workspace the server is
+/// What a credential is for: a tool server or a remote agent of an organisation.
+pub(super) struct Owner {
+    pub id: String,
+    pub org: String,
+    /// The workspaces it is open to; `None`: all.
+    pub workspaces: Option<Vec<String>>,
+}
+
+/// The tool server or remote agent (`kind`) named by the path, in the organisation named by the
+/// path, which the principal may read.
+pub(super) async fn owner_of(
+    st: &AdminState,
+    p: &Principal,
+    params: &HashMap<String, String>,
+    snap: &Snapshot,
+    kind: &'static str,
+    label: &'static str,
+) -> ApiResult<Owner> {
+    let scope = resolve_scope(ScopeKind::Organisation, params, snap)?;
+    if !p.can_read_org(scope.org()) {
+        return Err(ApiError::forbidden());
+    }
+    let id = params.get("id").ok_or_else(|| ApiError::not_found(label))?;
+    let mut tx = st.store.begin().await?;
+    let row = tx
+        .get_kind(kind, id)
+        .await?
+        .filter(|r| r.parent.as_deref() == Some(scope.org()))
+        .ok_or_else(|| ApiError::not_found(label))?;
+    let workspaces = row.doc.get("workspaces").and_then(|w| serde_json::from_value(w.clone()).ok());
+    Ok(Owner { id: row.id, org: scope.org().to_owned(), workspaces })
+}
+
+/// Whether the principal may manage credentials of `scope` for `owner`: the organisation's
+/// administrators for its own, a workspace's for the workspace's, of a workspace the owner is
 /// open to.
-fn can_manage(p: &Principal, server: &Obj<ToolServer>, scope: &CredentialScope, snap: &Snapshot) -> bool {
-    let org = server.parent.as_deref().unwrap_or_default();
+fn can_manage(p: &Principal, owner: &Owner, scope: &CredentialScope, snap: &Snapshot) -> bool {
+    let org = owner.org.as_str();
     match scope {
         CredentialScope::Organisation(o) => o == org && p.can_admin_org(org),
         CredentialScope::Workspace(ws) => {
             snap.workspaces.get(ws).is_some_and(|w| w.organisation_id == org && p.can_admin_workspace(ws, org))
-                && server.doc.workspaces.as_ref().is_none_or(|open| open.contains(ws))
+                && owner.workspaces.as_ref().is_none_or(|open| open.contains(ws))
         }
         CredentialScope::Global => false,
     }
@@ -299,20 +339,23 @@ fn workspace_of(scope: &CredentialScope) -> Option<&str> {
     }
 }
 
-async fn create_credential(
-    State(st): State<AdminState>,
-    p: Principal,
-    Params(params): Params,
-    Json(input): Json<ToolCredentialInput>,
+/// Stores a new credential for the owner the path names; made current, it retires the one it
+/// replaces after the grace period.
+pub(super) async fn create_credential_for(
+    st: &AdminState,
+    p: &Principal,
+    params: &HashMap<String, String>,
+    input: ToolCredentialInput,
+    kind: &'static str,
+    label: &'static str,
 ) -> ApiResult<(StatusCode, Json<Item<ToolCredentialView>>)> {
     let snap = st.config.snapshot();
-    let server = server_of(&st, &p, &params, &snap).await?;
-    let org = server.parent.clone().unwrap_or_default();
+    let owner = owner_of(st, p, params, &snap, kind, label).await?;
     let scope = match input.workspace_id.as_deref().filter(|w| !w.is_empty()) {
         Some(ws) => CredentialScope::Workspace(ws.to_owned()),
-        None => CredentialScope::Organisation(org.clone()),
+        None => CredentialScope::Organisation(owner.org.clone()),
     };
-    if !can_manage(&p, &server, &scope, &snap) {
+    if !can_manage(p, &owner, &scope, &snap) {
         return Err(ApiError::forbidden());
     }
     let secret = input.secret.trim();
@@ -325,7 +368,7 @@ async fn create_credential(
     let id = new_id(ConnectorCredential::PREFIX);
     let kek = st.boot.keks.first().ok_or_else(|| ApiError::internal("no key-encryption key"))?;
     let doc = ConnectorCredential {
-        owner_id: server.id.clone(),
+        owner_id: owner.id.clone(),
         scope: scope.clone(),
         label: input.label.trim().to_owned(),
         // The credential id binds the ciphertext to this record.
@@ -337,14 +380,14 @@ async fn create_credential(
     let grace = Duration::hours(i64::from(input.grace_hours.unwrap_or(24).min(720)));
     let mut tx = st.store.begin().await?;
     if doc.state == CredentialState::Current {
-        retire_current(&mut tx, &p, &org, &server.id, &scope, &id, grace).await?;
+        retire_current(&mut tx, p, &owner.org, &owner.id, &scope, &id, grace).await?;
     }
-    let audit = p.audit(Some(&org), workspace_of(&scope));
+    let audit = p.audit(Some(&owner.org), workspace_of(&scope));
     let row = tx
         .create(
             ConnectorCredential::KIND,
             &id,
-            Some(&server.id),
+            Some(&owner.id),
             None,
             &serde_json::to_value(&doc).map_err(ApiError::internal)?,
             audit,
@@ -359,12 +402,12 @@ async fn retire_current(
     tx: &mut Tx,
     p: &Principal,
     org: &str,
-    server_id: &str,
+    owner_id: &str,
     scope: &CredentialScope,
     replacing_with: &str,
     grace: Duration,
 ) -> ApiResult<()> {
-    for row in tx.list(ConnectorCredential::KIND, Some(server_id)).await? {
+    for row in tx.list(ConnectorCredential::KIND, Some(owner_id)).await? {
         let mut old: Obj<ConnectorCredential> = row.into_obj()?;
         if old.id != replacing_with && &old.doc.scope == scope && old.doc.state == CredentialState::Current {
             old.doc.state = CredentialState::Retiring;
@@ -377,21 +420,23 @@ async fn retire_current(
     Ok(())
 }
 
-async fn list_credentials(
-    State(st): State<AdminState>,
-    p: Principal,
-    Params(params): Params,
+pub(super) async fn list_credentials_for(
+    st: &AdminState,
+    p: &Principal,
+    params: &HashMap<String, String>,
+    kind: &'static str,
+    label: &'static str,
 ) -> ApiResult<Json<Vec<Item<ToolCredentialView>>>> {
     let snap = st.config.snapshot();
-    let server = server_of(&st, &p, &params, &snap).await?;
+    let owner = owner_of(st, p, params, &snap, kind, label).await?;
     let mut tx = st.store.begin().await?;
-    let rows = tx.list(ConnectorCredential::KIND, Some(&server.id)).await?;
+    let rows = tx.list(ConnectorCredential::KIND, Some(&owner.id)).await?;
     let mut out = Vec::new();
     for row in rows {
         let obj: Obj<ConnectorCredential> = row.into_obj()?;
         // A workspace's own credential is shown to whoever reads that workspace.
         let readable = match &obj.doc.scope {
-            CredentialScope::Workspace(ws) => p.can_read_workspace(ws, server.parent.as_deref().unwrap_or_default()),
+            CredentialScope::Workspace(ws) => p.can_read_workspace(ws, &owner.org),
             _ => true,
         };
         if readable {
@@ -406,35 +451,38 @@ async fn load_credential(
     p: &Principal,
     params: &HashMap<String, String>,
     snap: &Snapshot,
-) -> ApiResult<(Obj<ToolServer>, Obj<ConnectorCredential>)> {
-    let server = server_of(st, p, params, snap).await?;
+    kind: &'static str,
+    label: &'static str,
+) -> ApiResult<(Owner, Obj<ConnectorCredential>)> {
+    let owner = owner_of(st, p, params, snap, kind, label).await?;
     let cid = params.get("cid").ok_or_else(|| ApiError::not_found("credential"))?;
     let cred = st.store.get_obj::<ConnectorCredential>(cid).await.map_err(|_| ApiError::not_found("credential"))?;
-    if cred.doc.owner_id != server.id {
+    if cred.doc.owner_id != owner.id {
         return Err(ApiError::not_found("credential"));
     }
-    if !can_manage(p, &server, &cred.doc.scope, snap) {
+    if !can_manage(p, &owner, &cred.doc.scope, snap) {
         return Err(ApiError::forbidden());
     }
-    Ok((server, cred))
+    Ok((owner, cred))
 }
 
-async fn set_credential_state(
-    State(st): State<AdminState>,
-    p: Principal,
-    Params(params): Params,
-    Json(input): Json<ToolCredentialStateInput>,
+pub(super) async fn set_credential_state_for(
+    st: &AdminState,
+    p: &Principal,
+    params: &HashMap<String, String>,
+    input: ToolCredentialStateInput,
+    kind: &'static str,
+    label: &'static str,
 ) -> ApiResult<Json<Item<ToolCredentialView>>> {
     let snap = st.config.snapshot();
-    let (server, mut cred) = load_credential(&st, &p, &params, &snap).await?;
-    let org = server.parent.clone().unwrap_or_default();
+    let (owner, mut cred) = load_credential(st, p, params, &snap, kind, label).await?;
     let mut tx = st.store.begin().await?;
     if input.state == CredentialState::Current {
-        retire_current(&mut tx, &p, &org, &server.id, &cred.doc.scope, &cred.id, Duration::hours(24)).await?;
+        retire_current(&mut tx, p, &owner.org, &owner.id, &cred.doc.scope, &cred.id, Duration::hours(24)).await?;
         cred.doc.retire_at = None;
     }
     cred.doc.state = input.state;
-    let mut audit = p.audit(Some(&org), workspace_of(&cred.doc.scope));
+    let mut audit = p.audit(Some(&owner.org), workspace_of(&cred.doc.scope));
     audit.action =
         format!("set_state:{}", serde_json::to_value(input.state).map_err(ApiError::internal)?.as_str().unwrap_or(""));
     let row =
@@ -443,18 +491,56 @@ async fn set_credential_state(
     Ok(Json(credential_view(&row.into_obj()?)))
 }
 
+pub(super) async fn delete_credential_for(
+    st: &AdminState,
+    p: &Principal,
+    params: &HashMap<String, String>,
+    kind: &'static str,
+    label: &'static str,
+) -> ApiResult<StatusCode> {
+    let snap = st.config.snapshot();
+    let (owner, cred) = load_credential(st, p, params, &snap, kind, label).await?;
+    let mut tx = st.store.begin().await?;
+    let audit = p.audit(Some(&owner.org), workspace_of(&cred.doc.scope));
+    tx.delete(&cred.id, audit).await?;
+    st.commit(tx).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+const SERVER: (&str, &str) = (ToolServer::KIND, "tool server");
+
+async fn create_credential(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Json(input): Json<ToolCredentialInput>,
+) -> ApiResult<(StatusCode, Json<Item<ToolCredentialView>>)> {
+    create_credential_for(&st, &p, &params, input, SERVER.0, SERVER.1).await
+}
+
+async fn list_credentials(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+) -> ApiResult<Json<Vec<Item<ToolCredentialView>>>> {
+    list_credentials_for(&st, &p, &params, SERVER.0, SERVER.1).await
+}
+
+async fn set_credential_state(
+    State(st): State<AdminState>,
+    p: Principal,
+    Params(params): Params,
+    Json(input): Json<ToolCredentialStateInput>,
+) -> ApiResult<Json<Item<ToolCredentialView>>> {
+    set_credential_state_for(&st, &p, &params, input, SERVER.0, SERVER.1).await
+}
+
 async fn delete_credential(
     State(st): State<AdminState>,
     p: Principal,
     Params(params): Params,
 ) -> ApiResult<StatusCode> {
-    let snap = st.config.snapshot();
-    let (server, cred) = load_credential(&st, &p, &params, &snap).await?;
-    let mut tx = st.store.begin().await?;
-    let audit = p.audit(server.parent.as_deref(), workspace_of(&cred.doc.scope));
-    tx.delete(&cred.id, audit).await?;
-    st.commit(tx).await?;
-    Ok(StatusCode::NO_CONTENT)
+    delete_credential_for(&st, &p, &params, SERVER.0, SERVER.1).await
 }
 
 // --- probing and approvals -------------------------------------------------------------------

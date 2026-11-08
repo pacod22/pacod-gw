@@ -1,5 +1,6 @@
 //! The configuration resources of the management API.
 
+pub mod a2a;
 pub mod access;
 pub mod agent;
 pub mod intent_try;

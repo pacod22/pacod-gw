@@ -67,6 +67,7 @@ pub async fn once(st: &AdminState) {
     }
     // Tool servers whose tools were last listed longer ago than the setting says.
     super::resources::tools::upkeep(st).await;
+    super::resources::a2a::upkeep(st).await;
     // Batches created through the gateway: asked about once a minute (in tests sooner), and
     // accounted when they have ended.
     let min_seconds = (st.boot.upkeep_seconds * 2).min(60) as i64;

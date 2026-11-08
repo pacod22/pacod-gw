@@ -297,7 +297,7 @@ fn admit(
         tags: &r.tags,
         intent: None,
         internal: false,
-        tool: Some((server, tool)),
+        tool: Some(crate::tools::grant::Callee::Tool { server, tool }),
         agent: call.caller.agent.as_ref().map(|a| a.id.as_str()),
     };
     let mut applicable = call.gw.limits.applicable(&subjects, chrono::Utc::now());

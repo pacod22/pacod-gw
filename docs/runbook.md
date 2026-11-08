@@ -3683,3 +3683,38 @@ speaks for cannot be deleted.
 calls of all the keys that speak for it; calls of no registered agent are not counted. With the
 metric `tool_calls` and the window `minute` it bounds an agent that loops over tools.
 
+### 21.4 Remote agents (A2A)
+
+An organisation's administrators register an A2A agent (Organisation → Remote agents,
+`/api/v1/orgs/{org}/remote-agents`) by the address of its card (`card_url`, usually
+`…/.well-known/agent-card.json`), with the header its credential goes in, `timeout_ms` (120000),
+`max_bytes` (4 MiB, an answer or one event of a stream) and the workspaces it is open to. The
+address is held to the tool servers' egress list (section 21.1), and so is the interface the card
+names, when it is approved. Credentials work as for tool servers.
+
+**The card.** `POST …/remote-agents/{id}/probe` reads the card; it must offer a JSON-RPC
+interface of version 1.0, which is what the gateway speaks. `GET …/card` shows it with its
+status (`new`, `approved`, `changed`); `POST …/card/approve` with its `hash` approves it. The hash
+covers the whole card but its signatures. Upkeep reads it again with the tool servers; a changed
+card holds the agent (`card_changed` in the audit log) until it is approved again.
+
+**Callers** reach an agent their key's bundles grant (`a2a:<name>`), open to their workspace,
+whose card is approved and not held; any other answers `404`, unknown and not granted alike.
+
+| | |
+|---|---|
+| `GET /a2a/{name}/.well-known/agent-card.json` (or `GET /a2a/{name}`) | The approved card, rewritten: one interface, the gateway's `/a2a/{name}` (scheme and host as the request names them, `X-Forwarded-Proto` respected), JSON-RPC 1.0; the gateway's security scheme (a gateway key as bearer token); push notifications and the extended card off; the agent's signatures left out, since the rewriting would break them; the agent's tenant left out. A gateway key is needed. |
+| `POST /a2a/{name}` | One JSON-RPC request. `A2A-Version` must be `1.0` or absent (`400`, `-32009` otherwise). `SendMessage`, `SendStreamingMessage`, `GetTask`, `CancelTask` and `SubscribeToTask` are passed on with the organisation's (or the workspace's) credential and the card's tenant. `ListTasks` (`-32004`), the push-notification methods and a message that asks for push notifications (`-32003`), and `GetExtendedAgentCard` (`-32007`) are refused. |
+
+**Tasks are kept apart by workspace.** The agent sees one client, the gateway, so every task id
+and context id the agent makes is shown to callers sealed for their workspace (`gwt1.…`): an id
+of another workspace, or the agent's raw id, is answered `-32001`. A context id a caller chooses
+is sealed for its workspace (`gwc1.…`) before it reaches the agent and given back as the caller
+sent it, so that two workspaces never share a context. The keys come from `PGW_KEK`; ids sealed
+under a key-encryption key that has since been removed answer `-32001`.
+
+**Streams** (`SendStreamingMessage`, `SubscribeToTask`) are relayed event by event with their ids
+rewritten; an event larger than `max_bytes` ends the stream with an error. Every request leaves
+a record of a tool call (protocol `a2a`, the method as operation), a stream when it ends, and a
+message counts towards limits of tool calls (`filter.tools`: `a2a:<name>`).
+

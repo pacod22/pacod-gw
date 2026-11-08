@@ -89,8 +89,9 @@ pub struct LimitFilter {
     /// only when an enforcing binding gave one of these, at its acting confidence.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub intents: Vec<String>,
-    /// Tool calls only: the tools that count, as bundles name them (`mcp:<server>/*`,
-    /// `mcp:<server>/<tool>`; the broker's tools are `mcp:broker/...`).
+    /// Tool calls only: the tools and remote agents that count, as bundles name them
+    /// (`mcp:<server>/*`, `mcp:<server>/<tool>`, `a2a:<agent>`; the broker's tools are
+    /// `mcp:broker/...`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<String>,
 }

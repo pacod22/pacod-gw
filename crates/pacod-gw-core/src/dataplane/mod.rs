@@ -1,5 +1,6 @@
 //! The data plane: the listener applications call (concept section 4).
 
+pub mod a2a;
 pub mod anthropic;
 pub mod auth;
 pub mod client_ip;
@@ -283,6 +284,8 @@ fn routes() -> Router<Arc<Gw>> {
         .route("/proxy/{provider}/{*rest}", any(proxy::handle))
         .route("/mcp", post(mcp::handle))
         .route("/mcp/{bundle}", post(mcp::handle_bundle))
+        .route("/a2a/{name}", post(a2a::call).get(a2a::card))
+        .route("/a2a/{name}/.well-known/agent-card.json", get(a2a::card))
         .route("/v1/chat/completions", post(managed::chat_completions))
         .route("/v1/messages", post(managed::messages))
         .route("/v1/messages/count_tokens", post(managed::count_tokens))

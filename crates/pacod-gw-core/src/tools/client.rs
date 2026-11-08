@@ -220,6 +220,42 @@ impl ToolClient {
         tokio::time::timeout(target.timeout, exchange).await.map_err(|_| ClientError::Timeout(target.timeout))?
     }
 
+    /// Fetches a JSON document an administrator named (a remote agent's card), within the
+    /// policy, up to the target's size limit.
+    pub async fn get_json(&self, target: &Target<'_>) -> Result<Value, ClientError> {
+        self.policy.check_url(target.url).map_err(|e| ClientError::Unreachable(e.to_string()))?;
+        let mut req = self.http.get(target.url).header(ACCEPT, "application/json");
+        if let Some((name, value)) = &target.auth {
+            req = req.header(name.to_string(), value);
+        }
+        let fetch = async {
+            let mut resp = req.send().await.map_err(|e| {
+                if e.is_timeout() { ClientError::Timeout(target.timeout) } else { ClientError::Unreachable(chain(&e)) }
+            })?;
+            if !resp.status().is_success() {
+                return Err(ClientError::Status(resp.status().as_u16(), Value::Null));
+            }
+            let body = read_body(&mut resp, target.max_bytes).await?;
+            serde_json::from_slice(&body).map_err(|e| ClientError::Malformed(e.to_string()))
+        };
+        tokio::time::timeout(target.timeout, fetch).await.map_err(|_| ClientError::Timeout(target.timeout))?
+    }
+
+    /// Sends a request to a URL with the client's checks and returns the response for the
+    /// caller to read: a remote agent's answers, which may be streams.
+    pub async fn post_raw(
+        &self,
+        url: &str,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<reqwest::Response, ClientError> {
+        self.policy.check_url(url).map_err(|e| ClientError::Unreachable(e.to_string()))?;
+        self.http.post(url).headers(headers).body(body).timeout(timeout).send().await.map_err(|e| {
+            if e.is_timeout() { ClientError::Timeout(timeout) } else { ClientError::Unreachable(chain(&e)) }
+        })
+    }
+
     /// Opens a session with a server of the 2025-11-25 revision (or an earlier one).
     pub async fn initialize(&self, target: &Target<'_>) -> Result<Session, ClientError> {
         let opening = Link::Legacy(Session { version: LEGACY.into(), id: None });
@@ -383,7 +419,7 @@ async fn read_answer(
     Ok(Answer { message, bytes: body.len(), session_id })
 }
 
-async fn read_body(resp: &mut reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, ClientError> {
+pub(crate) async fn read_body(resp: &mut reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, ClientError> {
     let mut body = Vec::new();
     while let Some(chunk) = resp.chunk().await.map_err(|e| ClientError::Unreachable(chain(&e)))? {
         if body.len() + chunk.len() > max_bytes {

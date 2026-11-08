@@ -5,7 +5,7 @@ const bundles = resource({
 	noun: 'tool bundle',
 	fields: async () => ({
 		allow: {
-			help: 'mcp:<server>/* grants every approved tool of a tool server; mcp:<server>/<tool> one tool, by its own name on the server.'
+			help: 'mcp:<server>/* grants every approved tool of a tool server; mcp:<server>/<tool> one tool, by its own name on the server; a2a:<agent> a remote agent.'
 		},
 		deny: { help: 'Entries in the same form that the bundle never grants. A deny entry wins.' }
 	})

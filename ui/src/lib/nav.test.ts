@@ -126,6 +126,7 @@ describe('buildNav', () => {
 			'Templates',
 			'Routing schemes',
 			'Tool servers',
+			'Remote agents',
 			'Plugins',
 			'Settings'
 		];

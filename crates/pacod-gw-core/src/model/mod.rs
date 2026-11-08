@@ -4,6 +4,7 @@
 //! what the snapshot is built from and what the management API reads and writes, so a field
 //! added here is stored, hot-reloaded and exposed without further plumbing.
 
+pub mod a2a;
 pub mod access;
 pub mod agent;
 pub mod limit;
@@ -23,6 +24,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub use a2a::{AgentCardPin, RemoteAgent};
 pub use access::{AdminToken, RoleBinding, RoleName, RoleScope, User};
 pub use agent::Agent;
 pub use limit::{

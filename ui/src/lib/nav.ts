@@ -492,6 +492,7 @@ function organisationGroup(principal: Principal, org: string): NavGroup {
 			page('Templates', 'templates', 'templates'),
 			page('Routing schemes', 'routing', 'routing'),
 			page('Tool servers', 'tool-servers', 'tools'),
+			page('Remote agents', 'remote-agents', 'agents'),
 			{
 				...page('Plugins', 'plugins', 'plugins'),
 				match: [organisationPath(org, 'plugins'), organisationPath(org, 'intent-catalogues')]
@@ -537,6 +538,7 @@ const ORGANISATION_PAGES = new Set([
 	'templates',
 	'routing',
 	'tool-servers',
+	'remote-agents',
 	'plugins',
 	'intent-catalogues',
 	'settings'
