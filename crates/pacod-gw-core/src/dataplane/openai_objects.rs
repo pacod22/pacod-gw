@@ -686,6 +686,7 @@ async fn create_batch(
             tags: &tags,
             intent: None,
             internal: false,
+            tool: None,
         };
         let mut applicable = gw.limits.applicable(&subjects, now);
         gw.limits

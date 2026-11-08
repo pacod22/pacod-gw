@@ -555,6 +555,11 @@ The ClickHouse migrations `0003_attribution` (the caller's `agent_id`, `user_id`
 agent calls: an older analytics service has no `/ingest/tool-calls`, so its batches stay in the
 core's spool until the analytics service is upgraded.
 
+**Order: every core instance before new kinds of configuration.** An instance of an older
+release ignores fields it does not know (a key's `tool_bundles`) and reports a limit it cannot
+read (one with the metric `tool_calls`) as a problem and leaves it out. Upgrade every instance,
+gateways on other machines included, before creating tool servers, bundles or such limits.
+
 **Upgrading to the release with model data.** The price tracker leaves the analytics service.
 The core now takes model information and prices from a daily sync (section 12, Model data), by
 default from pacod-aggregator. Migrations `0024_price_pages`, `0025_discovery_scraper_source` and
@@ -3634,6 +3639,14 @@ forgotten it. The answer:
   passes none of that on.
 
 An unknown tool, and one the caller may not use, are answered alike: `-32602` "unknown tool".
+
+**Limits.** A limit with the metric `tool_calls` counts tool calls, one each when it is
+admitted, as `requests` counts model calls; `filter.tools` takes entries in the bundles' form
+(`mcp:broker/*` for the broker's tools) and `filter.keys` and `filter.tags` apply as for other
+limits. Tool calls count towards no other metric, and model calls not towards this one, so a
+rate class or a `requests` limit never stops a tool call. A refused call is answered with the
+error `-32000` naming the limit (`data.limit`, `resets_at`, `retry_after_seconds`) and recorded
+as `limited`. A per-minute `tool_calls` limit of each key bounds an agent that loops.
 
 **Records.** Every `tools/call` leaves a record (Insight → Requests → Tool calls): the verdict
 (`allowed`; `denied` for an unknown or ungranted tool or bundle; `invalid` for a request whose

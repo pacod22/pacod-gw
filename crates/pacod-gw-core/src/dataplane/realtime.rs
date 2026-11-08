@@ -807,6 +807,7 @@ impl Account {
             tags: &s.event.tags,
             intent: None,
             internal: false,
+            tool: None,
         };
         self.gw.limits.applicable(&subjects, chrono::Utc::now())
     }

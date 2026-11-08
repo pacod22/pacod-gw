@@ -25647,6 +25647,11 @@
             "type": "string",
             "const": "spend",
             "description": "Cost in the reporting currency."
+          },
+          {
+            "type": "string",
+            "const": "tool_calls",
+            "description": "Calls of tools through `/mcp` (runbook section 21). Counted when the call is admitted,\nas requests are; tool calls count towards no other metric, and model calls not towards\nthis one."
           }
         ]
       },
@@ -25731,6 +25736,13 @@
               "type": "string"
             },
             "description": "Intents the intent plugin found (`docs/plugin-concept.md`, section 5.8). A call counts\nonly when an enforcing binding gave one of these, at its acting confidence."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tool calls only: the tools that count, as bundles name them (`mcp:<server>/*`,\n`mcp:<server>/<tool>`; the broker's tools are `mcp:broker/...`)."
           }
         },
         "description": "Which calls count towards a limit. Empty lists mean no restriction."

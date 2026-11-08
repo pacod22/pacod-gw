@@ -292,3 +292,60 @@ async fn parameters_marked_for_headers_go_with_the_call() {
             .await;
     assert_eq!(st, 422, "{v}");
 }
+
+/// Limits of tool calls count tool calls only, and limits of requests do not count them.
+#[tokio::test]
+async fn tool_calls_have_limits_of_their_own() {
+    let s = setup(Era::Modern).await;
+    let limits = format!("/orgs/{}/workspaces/{}/limits", s.fx.org, s.fx.ws);
+    let (st, v) =
+        s.gw.api(
+            "POST",
+            &limits,
+            Some(json!({ "name": "echoes", "subject": "workspace", "metric": "tool_calls", "window": "day",
+                         "amount": 2.0, "enforcement": "request", "filter": { "tools": ["mcp:mock/echo"] } })),
+        )
+        .await;
+    assert_eq!(st, 201, "{v}");
+    // No model call may be made at all: tool calls are not model calls.
+    let (st, v) =
+        s.gw.api(
+            "POST",
+            &limits,
+            Some(json!({ "name": "no-requests", "subject": "workspace", "metric": "requests", "window": "day",
+                         "amount": 0.0, "enforcement": "request" })),
+        )
+        .await;
+    assert_eq!(st, 201, "{v}");
+    let (st, v) =
+        s.gw.api(
+            "POST",
+            &limits,
+            Some(json!({ "name": "bad", "subject": "workspace", "metric": "requests", "window": "day", "amount": 1.0,
+                         "filter": { "tools": ["mcp:mock/*"] } })),
+        )
+        .await;
+    assert_eq!(st, 422, "a filter of tools is for limits of tool calls: {v}");
+
+    let echo = |text: &'static str| {
+        let s = &s;
+        async move {
+            modern(s, "/mcp", &s.key, "tools/call", json!({ "name": "mock__echo", "arguments": { "text": text } }))
+                .await
+                .1
+        }
+    };
+    assert_eq!(echo("1").await["result"]["content"][0]["text"], "1");
+    assert_eq!(echo("2").await["result"]["content"][0]["text"], "2");
+    let refused = echo("3").await;
+    assert_eq!(refused["error"]["code"], -32000, "{refused}");
+    assert_eq!(refused["error"]["data"]["limit"], "echoes");
+    // Another tool is not counted by the filter.
+    let (_, v) = modern(&s, "/mcp", &s.key, "tools/call", json!({ "name": "mock__picture", "arguments": {} })).await;
+    assert_eq!(v["result"]["content"][0]["type"], "image", "{v}");
+
+    let records = s.sink.wait_tool_calls(4).await;
+    let limited = records.iter().find(|r| r.verdict == "limited").expect("a limited call");
+    assert_eq!((limited.exposed_name.as_str(), limited.status.as_str()), ("mock__echo", "rejected"));
+    assert_eq!(s.mock.calls().iter().filter(|c| c.body["params"]["name"] == "echo").count(), 2, "the third never left");
+}

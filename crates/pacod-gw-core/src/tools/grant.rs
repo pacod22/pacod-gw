@@ -33,7 +33,7 @@ impl Item {
         }
     }
 
-    fn matches(&self, server: &str, tool: &str) -> bool {
+    pub fn matches(&self, server: &str, tool: &str) -> bool {
         match self {
             Self::Server(s) => s == server,
             Self::Tool(s, t) => s == server && t == tool,

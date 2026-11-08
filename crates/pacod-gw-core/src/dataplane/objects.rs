@@ -979,6 +979,7 @@ async fn create_batch(
             tags: &p.params.tags,
             intent: None,
             internal: false,
+            tool: None,
         };
         let mut applicable = gw.limits.applicable(&subjects, now);
         gw.limits.admit(&mut applicable).map_err(|r| GwError::from_refusal(&r))?;
@@ -1642,6 +1643,7 @@ pub(super) fn settle_event(
             tags: &e.tags,
             intent: None,
             internal: false,
+            tool: None,
         };
         let applicable = gw.limits.applicable(&subjects, Utc::now());
         gw.limits.settle_counted(applicable, &e.usage, e.cost_reporting.or(e.cost));

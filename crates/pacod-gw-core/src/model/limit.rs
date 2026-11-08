@@ -39,6 +39,10 @@ pub enum Metric {
     Requests,
     /// Cost in the reporting currency.
     Spend,
+    /// Calls of tools through `/mcp` (runbook section 21). Counted when the call is admitted,
+    /// as requests are; tool calls count towards no other metric, and model calls not towards
+    /// this one.
+    ToolCalls,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -82,6 +86,10 @@ pub struct LimitFilter {
     /// only when an enforcing binding gave one of these, at its acting confidence.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub intents: Vec<String>,
+    /// Tool calls only: the tools that count, as bundles name them (`mcp:<server>/*`,
+    /// `mcp:<server>/<tool>`; the broker's tools are `mcp:broker/...`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
 }
 
 /// A limit definition.
@@ -113,9 +121,25 @@ pub struct LimitSpec {
 pub struct OrgLimit(pub LimitSpec);
 
 impl Metric {
-    /// Counts tokens or spend, which are known only once a call has ended.
+    /// Counts tokens or spend, which are known only once a call has ended. Named one by one,
+    /// so that a metric added later is not taken for one: a key whose usage policy is automatic
+    /// asks for usage while such a limit applies.
     pub fn counts_usage(self) -> bool {
-        self != Metric::Requests
+        match self {
+            Metric::Tokens
+            | Metric::InputTokens
+            | Metric::OutputTokens
+            | Metric::CacheReadTokens
+            | Metric::CacheWriteTokens
+            | Metric::ReasoningTokens
+            | Metric::Spend => true,
+            Metric::Requests | Metric::ToolCalls => false,
+        }
+    }
+
+    /// Counted at admission, one per call, rather than settled from usage.
+    pub fn counts_calls(self) -> bool {
+        matches!(self, Metric::Requests | Metric::ToolCalls)
     }
 }
 
@@ -151,4 +175,16 @@ pub struct EndUserOverride {
 impl Doc for EndUserOverride {
     const KIND: &'static str = "end_user_override";
     const PREFIX: &'static str = "euo";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_calls_are_counted_as_calls_not_as_usage() {
+        assert!(!Metric::ToolCalls.counts_usage(), "a key with an automatic policy must not require usage for it");
+        assert!(Metric::ToolCalls.counts_calls() && Metric::Requests.counts_calls());
+        assert!(Metric::Spend.counts_usage() && !Metric::Spend.counts_calls());
+    }
 }

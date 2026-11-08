@@ -6289,7 +6289,7 @@ export interface components {
         };
         /** @description Whose consumption a limit counts. */
         LimitSubject: "organisation" | "workspace" | "key" | "end_user";
-        Metric: "requests" | "tokens" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens" | "reasoning_tokens" | "spend";
+        Metric: "requests" | "tokens" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens" | "reasoning_tokens" | "spend" | "tool_calls";
         Window: ("hour" | "day" | "month") | "minute" | "week" | "lifetime";
         Enforcement: "request" | "advisory";
         /** @description Which calls count towards a limit. Empty lists mean no restriction. */
@@ -6318,6 +6318,11 @@ export interface components {
              *     only when an enforcing binding gave one of these, at its acting confidence.
              */
             intents?: string[];
+            /**
+             * @description Tool calls only: the tools that count, as bundles name them (`mcp:<server>/*`,
+             *     `mcp:<server>/<tool>`; the broker's tools are `mcp:broker/...`).
+             */
+            tools?: string[];
         };
         /** @description A limit definition. */
         LimitSpec: {

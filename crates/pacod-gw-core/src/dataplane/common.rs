@@ -426,6 +426,7 @@ pub fn admit_limits(gw: &Gw, caller: &Caller, rec: &mut CallRecorder) -> Result<
         tags: &rec.event.tags,
         intent: rec.plugins.act.as_deref(),
         internal: matches!(caller.internal, Some(super::auth::Internal::Plugin { .. })),
+        tool: None,
     };
     let applicable = gw.limits.applicable(&subjects, Utc::now());
     if applicable.is_empty() && rec.limits.is_empty() {

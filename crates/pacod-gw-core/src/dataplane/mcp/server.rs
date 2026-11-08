@@ -15,6 +15,7 @@ use super::{
     rpc_result, server_info,
 };
 use crate::bootstrap::BrokerLink;
+use crate::limits::Subjects;
 use crate::model::{ResultLimits, ToolBundle};
 use crate::telemetry::metrics;
 use crate::tools::client::{ClientError, LEGACY, MODERN};
@@ -23,6 +24,9 @@ use crate::tools::pin;
 
 /// How long a caller may keep a tool list, in milliseconds: approvals take effect within it.
 const LIST_TTL_MS: u64 = 60_000;
+/// The error of a tool call a limit refused: an implementation-defined server error, since MCP
+/// has none of its own for it.
+const LIMITED: i64 = -32000;
 const METHODS: [&str; 5] = ["initialize", "ping", "server/discover", "tools/list", "tools/call"];
 
 /// The method as a metric label: one of [`METHODS`], or `other`, so that a caller cannot add
@@ -176,6 +180,9 @@ async fn tools_call(call: &Call<'_>, req: &Value, bundle: Option<&str>) -> Respo
         r.pin_hash = g.pin.hash.clone();
         r.verdict = verdict::ALLOWED.into();
     }
+    if let Some(answer) = admit(call, pending.record(), &g.server.doc.name, &g.pin.tool, &id) {
+        return pending.finish(answer);
+    }
     let Some(hub) = call.gw.tools.as_ref() else {
         return pending.finish(rpc_error(
             call.era,
@@ -235,6 +242,9 @@ async fn broker_call(call: &Call<'_>, req: &Value, link: &BrokerLink, name: &str
     let id = req["id"].clone();
     let mut pending = Pending::new(call, call.record(req, broker::TARGET, name));
     pending.record().verdict = verdict::ALLOWED.into();
+    if let Some(answer) = admit(call, pending.record(), broker::TARGET, name, &id) {
+        return pending.finish(answer);
+    }
     let sent = Instant::now();
     let outcome = broker::call(link, name, arguments).await;
     let r = pending.record();
@@ -266,6 +276,38 @@ async fn broker_call(call: &Call<'_>, req: &Value, link: &BrokerLink, name: &str
     let outcome = if pending.record().status == status::OK { "answered" } else { "unavailable" };
     metrics::record_mcp("tools/call", outcome);
     pending.finish(answer)
+}
+
+/// Counts a tool call against the limits of tool calls that apply to it (runbook section 21.2),
+/// or refuses it: then the record says `limited`, and the answer, which names the limit, is
+/// returned.
+fn admit(
+    call: &Call<'_>,
+    r: &mut pacod_gw_events::ToolCallRecord,
+    server: &str,
+    tool: &str,
+    id: &Value,
+) -> Option<(Response, usize)> {
+    let subjects = Subjects {
+        workspace: &call.caller.workspace,
+        key: &call.caller.key,
+        end_user: &r.end_user,
+        model: "",
+        template: "",
+        tags: &r.tags,
+        intent: None,
+        internal: false,
+        tool: Some((server, tool)),
+    };
+    let mut applicable = call.gw.limits.applicable(&subjects, chrono::Utc::now());
+    let Err(refusal) = call.gw.limits.admit(&mut applicable) else { return None };
+    let why = format!("the limit {} has no room for another tool call", refusal.limit_name);
+    refused(r, verdict::LIMITED, LIMITED, &why);
+    r.error_type = "limited".into();
+    metrics::record_mcp("tools/call", "limited");
+    let data = json!({ "limit": refusal.limit_name, "resets_at": refusal.resets_at,
+                       "retry_after_seconds": refusal.retry_after_seconds });
+    Some(rpc_error(call.era, id, LIMITED, &why, Some(data), StatusCode::OK))
 }
 
 /// A call the gateway did not pass on.
