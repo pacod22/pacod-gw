@@ -474,4 +474,6 @@ it. Platform admins only.
 
 In the load overlay (`docker-compose.load.yml`) and the Helm chart, the load agent also reaches
 the load mock straight, for the benchmark's baseline cells
-(`BENCH_BASELINE_MOCK_URL=http://gw-load-mock:9000`).
+(`BENCH_BASELINE_MOCK_URL=http://gw-load-mock:9000`). A benchmark on another machine
+reaches the management API and that mock through Caddy instead, with `docker-compose.bench.yml`
+(runbook, section 9, "A benchmark on another machine").

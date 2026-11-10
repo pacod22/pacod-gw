@@ -1,0 +1,48 @@
+# pacod-gw: a pacod-benchmark on another machine (docs/runbook.md, section 9, "A benchmark on
+# another machine"). On top of docker-compose.load.yml, whose mock it offers:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.standalone.yml \
+#     -f deploy/docker-compose.load.yml -f deploy/docker-compose.bench.yml up -d --wait
+#   ("make up LOAD_TEST=1 BENCH=1"; scale-up and hub-up take the same switches)
+#
+# pacod-benchmark sets each run's scene up through the management API, sends the load from its
+# agents to the data plane, and measures each cell against a baseline: the same load straight to
+# the mock the gateway calls. On one host it reaches all three on the shared networks. From
+# another machine it reaches them here, through Caddy's API site, for the addresses in
+# PGW_ADMIN_ALLOW_CIDRS only:
+#
+#   <API site>/api/v1/      the management API (platform/caddy/gw.caddy, gw_admin_api)
+#   <API site>/load-mock/   gw-load-mock, without its control endpoints (gw_load_mock)
+#   <API site>/             the data plane, as before
+#
+# The API site is the HTTPS API host, which needs a certificate the benchmark trusts (a public
+# one; not PGW_TLS=internal), and http://:8088 inside the stack. This file publishes the latter
+# on PGW_BENCH_BIND, this host's address on a private network (a VLAN, a cloud VPC or a VPN such
+# as WireGuard): plain HTTP, so the benchmark's admin token and each cell's key cross that
+# network as they are. 127.0.0.1 by default, which publishes it to this host alone.
+#
+# The agents' calls then go through the same Caddy as their baselines, so that the difference
+# between a cell and its baseline is the gateway's.
+#
+# The gateway reaches the mock as http://gw-load-mock:9000: list gw-load-mock in
+# PGW_EGRESS_ALLOW_PRIVATE, and for pacod-benchmark's mcp and a2a cells in
+# PGW_TOOL_EGRESS_ALLOW_PRIVATE as well. Allow, in the firewall:
+#
+#   the benchmark and its agents -> this host   PGW_BENCH_PORT (8088), or 443 for the API host
+#
+# Never put "private_ranges" into PGW_ADMIN_ALLOW_CIDRS with this file: it admits every
+# container on the stack's networks, the load agent's among them.
+
+services:
+  pacod-caddy:
+    environment:
+      GW_API_EXTRA: import gw_benchmark
+    ports:
+      - "${PGW_BENCH_BIND:-127.0.0.1}:${PGW_BENCH_PORT:-8088}:8088"
+    # pacod-admin-net: the management API listens there alone. Caddy calls it as one of its
+    # clients, as the console does.
+    networks: [pacod-net, pacod-admin-net]
+
+networks:
+  pacod-admin-net:
+    external: true
