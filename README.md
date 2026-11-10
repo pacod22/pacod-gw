@@ -100,8 +100,9 @@ runs on its own and as part of the full stack (pacod-demo) without changes:
   which is internal (no route out): the management API, which the core binds to its alias
   there, `pacod-gw-admin:8081`, and pacod-id's internal listener, `pacod-id-internal:8071`.
   Their clients (the console, the analytics service, the tester, and the core for pacod-id)
-  join it too. The rest of `pacod-net` cannot reach either. `make network` creates it
-  as well.
+  join it too, and so does Caddy when its API site serves the management API
+  (`docker-compose.bench.yml` for a benchmark on another machine; runbook, sections 4 and 9).
+  The rest of `pacod-net` cannot reach either. `make network` creates it as well.
 - Service, container and network name are the same: the core is `pacod-gw`, the other
   services of the gateway are `gw-*` (`gw-console`, `gw-analytics`, `gw-tester`,
   `gw-clickhouse`, `gw-preflight`), and the shared components are `pacod-*`

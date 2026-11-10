@@ -202,6 +202,11 @@ metrics (`PGW_NODE_METRICS_PORT`, 9100) for the central Prometheus.
 A load agent on another machine (`deploy/load-agent/`) publishes its API on its private
 address `LOAD_AGENT_BIND`, port `LOAD_AGENT_PORT` (8096), for the central tester.
 
+With `docker-compose.bench.yml` (a pacod-benchmark on another machine, section 9) Caddy
+publishes its API site without TLS (8088) on the private address `PGW_BENCH_BIND`, port
+`PGW_BENCH_PORT`: the data plane, and for `PGW_ADMIN_ALLOW_CIDRS` the management API at
+`/api/v1/` and the load tests' mock at `/load-mock/`.
+
 The minimal gateway (section 17) publishes its data plane, without TLS, on
 `PGW_LITE_BIND:PGW_LITE_PORT`, by default 127.0.0.1:14080. It uses none of the ports above, but
 its name on `pacod-net` is `pacod-gw`, so it does not run on the same host as this stack.
@@ -397,19 +402,25 @@ appears with a private address. Set `PGW_GRAFANA_URL` to the same address
 (`ui.grafanaUrl` in the Helm chart) and the console's Monitoring page links to Grafana;
 unset, the link is hidden.
 
-**Optional: the management API from outside.** Scripts and CI may need it. Uncomment the
-block marked for it in `platform/caddy/gw.caddy`, and put Caddy on `pacod-admin-net`, the only
-network the management API listens on, with an override file next to the others:
+**Optional: the management API from outside.** Scripts and CI may need it. Turn on its route
+on the API site (`GW_API_EXTRA`, `platform/caddy/gw.caddy`), and put Caddy on `pacod-admin-net`,
+the only network the management API listens on, with an override file next to the others:
 
 ```yaml
 services:
   pacod-caddy:
+    environment:
+      GW_API_EXTRA: import gw_admin_api
     networks: [pacod-net, pacod-admin-net]
+networks:
+  pacod-admin-net:
+    external: true
 ```
 
 It is then served at `https://<API host>/api/v1/` for the addresses in
-`PGW_ADMIN_ALLOW_CIDRS`. Without that block, call it from a container on `pacod-admin-net`;
-from `pacod-net` alone it does not answer:
+`PGW_ADMIN_ALLOW_CIDRS`. `docker-compose.bench.yml` turns on the same route, with the load
+tests' mock, for a benchmark on another machine (section 9). Without the route, call it from a
+container on `pacod-admin-net`; from `pacod-net` alone it does not answer:
 
 ```sh
 docker run --rm --network pacod-admin-net curlimages/curl -s http://pacod-gw-admin:8081/readyz
@@ -1287,6 +1298,53 @@ the address it reaches the gateway at.
   file in `LOAD_AGENT_CA_FILE_IN_CONTAINER`.
 - The agent needs a file limit of one socket per call in flight; the compose file sets
   65 536.
+
+### A benchmark on another machine
+
+pacod-benchmark measures this gateway from a machine of its own: it sets each run's scene up
+through the management API, its agents load the data plane, and each cell is measured against
+a baseline, the same load straight to the mock the gateway calls. `docker-compose.bench.yml`
+offers all three on Caddy's API site, the management API and the mock for the addresses in
+`PGW_ADMIN_ALLOW_CIDRS` only:
+
+| Path on the API site | What | Who |
+|---|---|---|
+| `/api/v1/` | The management API (`pacod-gw-admin:8081`) | `PGW_ADMIN_ALLOW_CIDRS` |
+| `/load-mock/` | `gw-load-mock`, without its control endpoints (`/__mock/...`) | `PGW_ADMIN_ALLOW_CIDRS` |
+| everything else | The data plane, as before | everyone |
+
+The API site is the HTTPS API host, which needs a certificate the benchmark trusts (a public
+one, not `PGW_TLS=internal`), and port 8088 without TLS, which the file publishes on
+`PGW_BENCH_BIND:PGW_BENCH_PORT`. On this host, in deploy/.env:
+
+```sh
+PGW_BENCH_BIND=10.0.0.10                 # this host's private address
+PGW_ADMIN_ALLOW_CIDRS=10.0.0.20/32       # the benchmark's machine and its agents'
+PGW_EGRESS_ALLOW_PRIVATE=gw-load-mock     # with anything listed already
+PGW_TOOL_EGRESS_ALLOW_PRIVATE=gw-load-mock   # for pacod-benchmark's mcp and a2a cells
+TESTER_LOAD_TOKEN=...                    # the load overlay needs it (section 3)
+```
+
+then `make up LOAD_TEST=1 BENCH=1`. Mint a platform-admin token for the benchmark (its runbook,
+section 3) and give it, in pacod-benchmark, these addresses:
+
+| pacod-benchmark | Value |
+|---|---|
+| Management API | `http://10.0.0.10:8088` |
+| The mock, as the gateway reaches it | `http://gw-load-mock:9000` |
+| The mock, as the agents reach it | `http://10.0.0.10:8088/load-mock` |
+| Data plane | `http://10.0.0.10:8088` |
+
+- The agents' calls go through the same Caddy as their baselines, so that a cell's overhead
+  is the gateway's.
+- Port 8088 is plain HTTP: the benchmark's admin token and each cell's key cross the private
+  network as they are. Use the private network or VPN of section 9, and allow the benchmark's
+  machine to reach that port, nothing else.
+- Check in `dc logs pacod-caddy` which client address Caddy sees before relying on the list
+  (section 4, "Optional: Grafana"). Never put `private_ranges` into it with this file: it
+  admits every container of the stack, the load agent's among them.
+- Caddy joins `pacod-admin-net`, as a client of the management API like the console.
+- The list also lets those addresses reach Grafana's login.
 
 ### On Kubernetes
 
@@ -2778,6 +2836,7 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 | `make hub-up`, `make hub-down` | On the central host when gateways on other machines join: the scale layout plus the hub file. | Section 9 |
 | `make node-up`, `make node-down` | On another machine: one gateway that joins the central host. | Section 9 |
 | `LOAD_TEST=1` with `up`, `scale-up` or `hub-up` (and the matching `down`) | Adds `docker-compose.load.yml`: a load agent and the load tests' mock in the stack. | Section 9 |
+| `BENCH=1` with `LOAD_TEST=1` and `up`, `scale-up` or `hub-up` (and the matching `down`) | Adds `docker-compose.bench.yml`: Caddy's API site, with the management API and the load tests' mock for `PGW_ADMIN_ALLOW_CIDRS`, on `PGW_BENCH_BIND:PGW_BENCH_PORT`, for a pacod-benchmark on another machine. Refused without `LOAD_TEST=1`. | Section 9 |
 | `make load-agent-up`, `make load-agent-down` | On another machine: a load agent for the central tester. | Section 9 |
 | `make backup` | Backs up PostgreSQL and ClickHouse (`deploy/scripts/backup.sh`). | Section 7 |
 | `make lite-up`, `make lite-down`, `make lite-check` | The minimal gateway, configured by `deploy/lite/.env`; `lite-check` shows what it reads, without secrets. | Section 17 |
@@ -3383,7 +3442,7 @@ files:
 
 | File | What | Read by |
 |---|---|---|
-| `platform/caddy/gw.caddy` | The API and console sites, with their snippets (`gw_*`). Addresses from `GW_API_SITE` and `GW_CONSOLE_SITE`. | `import /etc/caddy/sites/*.caddy` in `deploy/caddy/Caddyfile` and `Caddyfile.dev` |
+| `platform/caddy/gw.caddy` | The API and console sites, with their snippets (`gw_*`). Addresses from `GW_API_SITE` and `GW_CONSOLE_SITE`. `GW_API_EXTRA` adds routes to the API site, none by default: `import gw_admin_api` (the management API, section 4), `import gw_benchmark` (that and the load tests' mock, `docker-compose.bench.yml`). | `import /etc/caddy/sites/*.caddy` in `deploy/caddy/Caddyfile` and `Caddyfile.dev` |
 | `platform/postgres/gw-db.sh` | Creates the role `pacod_gw` (not a superuser) and its database where missing, and sets the role's password to `GW_DB_PASSWORD`. Refuses an installation where `pacod_gw` is still the superuser the image created (section 6). | `pacod-db-init`, at every start, as the superuser `postgres` |
 | `platform/prometheus/gw.yml` | The scrape jobs `pacod-gw-core` and `otel-collector`. | `scrape_config_files` in `deploy/prometheus/prometheus.yml` |
 

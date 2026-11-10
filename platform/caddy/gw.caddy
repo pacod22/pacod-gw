@@ -22,7 +22,12 @@
 #   PGW_CADDY_LOG_FORMAT   the access log's format: console (Caddy's name for text) or json
 #   PGW_DATA_UPSTREAMS     the gateway instances (pacod-gw:8080)
 #   PGW_MAX_BODY           the largest request body on the API site (64MB)
-#   PGW_ADMIN_ALLOW_CIDRS  who may open Grafana under /grafana/ on the console site (127.0.0.1/32)
+#   PGW_ADMIN_ALLOW_CIDRS  who may open Grafana under /grafana/ on the console site, and the routes
+#                          GW_API_EXTRA adds to the API site (127.0.0.1/32)
+#   GW_API_EXTRA           further routes of the API site, as whole directives: empty (none),
+#                          "import gw_admin_api" (the management API for scripts and CI), or
+#                          "import gw_benchmark" (that and the load tests' mock, for a
+#                          pacod-benchmark on another machine: deploy/docker-compose.bench.yml)
 #
 # The full stack sets GW_API_SITE and GW_CONSOLE_SITE to http://<host>.<domain>:<port>; nothing
 # else is needed there. GW_SITE_TLS holds a directive rather than a value because a tls
@@ -128,6 +133,41 @@
 	respond @outside "Forbidden" 403
 }
 
+# The management API at <API site>/api/v1/, for the addresses in PGW_ADMIN_ALLOW_CIDRS: scripts,
+# CI, a pacod-benchmark on another machine. Caddy must be on pacod-admin-net as well, the only
+# network the management API listens on (runbook, section 4). Every call needs a token of the
+# gateway still; the list keeps everyone else from trying one.
+(gw_admin_api) {
+	handle /api/v1/* {
+		import gw_allowed_addresses_only
+		reverse_proxy pacod-gw-admin:8081
+	}
+}
+
+# The load tests' mock (gw-load-mock, docker-compose.load.yml) at <API site>/load-mock/, for the
+# addresses in PGW_ADMIN_ALLOW_CIDRS: the baselines of a pacod-benchmark whose load agents are on
+# another machine. They then reach the mock through this Caddy as their calls reach the gateway,
+# so that the difference between the two is the gateway's. Its control endpoints (/__mock/...),
+# which script failures, are refused to everyone: a benchmark never calls them.
+(gw_load_mock) {
+	handle /load-mock/* {
+		import gw_allowed_addresses_only
+		uri strip_prefix /load-mock
+		@control path /__mock /__mock/*
+		respond @control "Forbidden" 403
+		reverse_proxy gw-load-mock:9000 {
+			# Its streams, chunk by chunk, as the data plane relays them.
+			flush_interval -1
+		}
+	}
+}
+
+# Both, for a pacod-benchmark on another machine (deploy/docker-compose.bench.yml).
+(gw_benchmark) {
+	import gw_admin_api
+	import gw_load_mock
+}
+
 # ---------------------------------------------------------------------------------------------
 # API site: the data plane (/v1, /gw/v1, /proxy, /mcp, /a2a, /healthz, /readyz); every path
 # goes to the core, which answers what it does not serve
@@ -144,15 +184,10 @@
 		max_size {$PGW_MAX_BODY:64MB}
 	}
 
-	# The management API is not exposed. The console reaches it on pacod-admin-net, the only
-	# network it listens on. To expose it for scripts and CI, uncomment this block, put
-	# pacod-caddy on pacod-admin-net as well (runbook, section 4) and set PGW_ADMIN_ALLOW_CIDRS.
-	# It is then served at <API site>/api/v1/ for the allowed addresses only.
-	#
-	# handle /api/v1/* {
-	# 	import gw_allowed_addresses_only
-	# 	reverse_proxy pacod-gw-admin:8081
-	# }
+	# The management API is not exposed by default: the console reaches it on pacod-admin-net.
+	# GW_API_EXTRA adds it ("import gw_admin_api"), or it and the load tests' mock ("import
+	# gw_benchmark"), for the addresses in PGW_ADMIN_ALLOW_CIDRS only. Empty: nothing.
+	{$GW_API_EXTRA}
 
 	handle {
 		import gw_data_plane

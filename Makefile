@@ -23,6 +23,13 @@ COMPOSE_DEV := docker compose $(APP) -f deploy/docker-compose.dev.yml $(STANDALO
 # "make up LOAD_TEST=1" (or scale-up, hub-up): load tests from the console, with an agent in the
 # stack. Off by default: an agent makes load on request.
 LOAD_TEST_FILE := $(if $(filter 1,$(LOAD_TEST)),-f deploy/docker-compose.load.yml)
+# "make up LOAD_TEST=1 BENCH=1" (or scale-up, hub-up): the management API and the load tests' mock
+# on Caddy's API site, for a pacod-benchmark on another machine (docs/runbook.md, section 9). Its
+# mock is the load tests': it needs LOAD_TEST=1.
+BENCH_FILE := $(if $(filter 1,$(BENCH)),-f deploy/docker-compose.bench.yml)
+ifeq ($(filter 1,$(BENCH))-$(filter 1,$(LOAD_TEST)),1-)
+$(error BENCH=1 needs LOAD_TEST=1: the benchmark's mock is the load tests' gw-load-mock)
+endif
 # Several gateways on one host, the management API on its own (docs/runbook.md, section 9).
 COMPOSE_SCALE := $(COMPOSE) -f deploy/docker-compose.scale.yml
 COMPOSE_DEV_SCALE := $(COMPOSE_DEV) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.scale.dev.yml
@@ -169,10 +176,10 @@ ui-build:
 
 # The production stack. Needs deploy/.env (see deploy/.env.example) and the images.
 up: network
-	$(COMPOSE) $(LOAD_TEST_FILE) up -d --wait
+	$(COMPOSE) $(LOAD_TEST_FILE) $(BENCH_FILE) up -d --wait
 
 down:
-	$(COMPOSE) $(LOAD_TEST_FILE) down
+	$(COMPOSE) $(LOAD_TEST_FILE) $(BENCH_FILE) down
 
 # The development stack: builds the images, adds the mock provider, needs no deploy/.env.
 # DEV_HTTPS=1 adds ports 80 and 443.
@@ -184,17 +191,17 @@ dev-down:
 
 # The production stack with two gateways and a separate management instance.
 scale-up: network
-	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) up -d --wait
+	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) $(BENCH_FILE) up -d --wait
 
 scale-down:
-	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) down
+	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) $(BENCH_FILE) down
 
 # The central host when gateways on other machines join (docs/runbook.md, section 9).
 hub-up: network
-	$(COMPOSE_HUB) $(LOAD_TEST_FILE) up -d --wait
+	$(COMPOSE_HUB) $(LOAD_TEST_FILE) $(BENCH_FILE) up -d --wait
 
 hub-down:
-	$(COMPOSE_HUB) $(LOAD_TEST_FILE) down
+	$(COMPOSE_HUB) $(LOAD_TEST_FILE) $(BENCH_FILE) down
 
 # On another machine: one gateway that joins the central host. Needs deploy/node/.env.
 node-up:
@@ -339,6 +346,8 @@ deploy-check:
 	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml config --quiet
 	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.load.yml config --quiet
 	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.load.yml config --quiet
+	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.load.yml -f deploy/docker-compose.bench.yml config --quiet
+	docker compose --env-file deploy/.env.example $(APP) $(STANDALONE) -f deploy/docker-compose.scale.yml -f deploy/docker-compose.hub.yml -f deploy/docker-compose.load.yml -f deploy/docker-compose.bench.yml config --quiet
 	$(COMPOSE_DEV_SCALE) config --quiet
 	$(COMPOSE_DEV) -f deploy/docker-compose.dev.https.yml config --quiet
 	$(COMPOSE_DEV_SCALE) -f deploy/docker-compose.dev.https.yml config --quiet
@@ -355,6 +364,13 @@ deploy-check:
 	docker run --rm -v "$(CURDIR)/deploy/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro" -v "$(CURDIR)/platform/caddy:/etc/caddy/sites:ro" \
 		-e GW_API_SITE="http://:8088 api.localhost" -e GW_CONSOLE_SITE="http://:13000 console.localhost" \
 		$(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+	@echo "== the same with the API site's further routes (GW_API_EXTRA, docker-compose.bench.yml)"
+	docker run --rm -v "$(CURDIR)/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$(CURDIR)/platform/caddy:/etc/caddy/sites:ro" \
+		-e GW_API_SITE="api.localhost http://:8088" -e GW_CONSOLE_SITE=console.localhost -e "GW_SITE_TLS=tls internal" \
+		-e "GW_API_EXTRA=import gw_benchmark" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+	docker run --rm -v "$(CURDIR)/deploy/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro" -v "$(CURDIR)/platform/caddy:/etc/caddy/sites:ro" \
+		-e GW_API_SITE="http://:8088 api.localhost" -e GW_CONSOLE_SITE="http://:13000 console.localhost" \
+		-e "GW_API_EXTRA=import gw_admin_api" $(CADDY_IMAGE) caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 	@echo "== pacod-id configuration (with the image make dev-up builds; skipped without it)"
 	@if docker image inspect pacod-id:dev >/dev/null 2>&1; then \
 		docker run --rm -e PGW_ID_ISSUER=https://id.example.com -e PGW_CONSOLE_URL=https://console.example.com \
