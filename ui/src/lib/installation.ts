@@ -9,6 +9,13 @@
 export const DATA_PLANE_PATHS =
 	'/v1 (OpenAI, Anthropic), /v1beta (Gemini), /gw/v1, /proxy/<provider>, /mcp, /a2a/<name>';
 
+/**
+ * The benchmark's mock as the gateway reaches it: the one Caddy's /load-mock/ route leads to
+ * (gw_load_mock in platform/caddy/gw.caddy), so that the baselines and the cells call the same
+ * mock.
+ */
+export const BENCH_MOCK_FOR_GATEWAY = 'http://gw-load-mock:9000';
+
 /** The command that prints Caddy's own root certificate, for PGW_TLS=internal. */
 export const ROOT_CERTIFICATE =
 	'docker exec pacod-caddy cat /data/caddy/pki/authorities/local/root.crt';
@@ -46,7 +53,10 @@ export interface Fact {
 
 export interface Installation {
 	addresses: Fact[];
-	/** The management API and the load tests' mock for a benchmark; null without BENCH=1. */
+	/**
+	 * The fields of pacod-benchmark's gateway form, each value to paste as it is, for a
+	 * benchmark on another machine; null without BENCH=1.
+	 */
 	bench: Fact[] | null;
 	settings: Fact[];
 	warnings: string[];
@@ -76,17 +86,26 @@ export function admitsEveryone(cidrs: string | undefined): boolean {
 	return (cidrs ?? '').split(/[\s,]+/).some((c) => c === '0.0.0.0/0' || c === '::/0');
 }
 
-/** The benchmark's base URL and what its address means for who can reach it. */
-function benchBase(address: string): { url: string; note: string } {
+/**
+ * The benchmark's base URL and what its address means for who can reach it. Published on
+ * every interface, the port is named by the console's host: Caddy's site on that port answers
+ * every host name, and the console's is one people already reach.
+ */
+function benchBase(address: string, consoleUrl: string): { url: string; note: string } {
 	const port = address.slice(address.lastIndexOf(':') + 1);
 	const bind = address.slice(0, address.lastIndexOf(':'));
-	if (bind === '0.0.0.0' || bind === '[::]' || bind === '')
+	if (bind === '0.0.0.0' || bind === '[::]' || bind === '') {
+		const host = hostOf(consoleUrl);
 		return {
-			url: `http://<this host>:${port}`,
-			note: `port ${port} on every interface of the host (PGW_BENCH_BIND=0.0.0.0)`
+			url: `http://${host || '<this host>'}:${port}`,
+			note: `Port ${port} on every interface of this host (PGW_BENCH_BIND=0.0.0.0): any of its names or addresses will do.`
 		};
+	}
 	if (bind === '127.0.0.1')
-		return { url: `http://${address}`, note: 'this host alone (PGW_BENCH_BIND)' };
+		return {
+			url: `http://${address}`,
+			note: 'This host alone (PGW_BENCH_BIND): another machine cannot reach it.'
+		};
 	return { url: `http://${address}`, note: '' };
 }
 
@@ -110,11 +129,17 @@ export function installation(input: InstallationInput): Installation {
 
 	let bench: Fact[] | null = null;
 	if (input.benchAddress) {
-		const { url, note } = benchBase(input.benchAddress);
+		const { url, note } = benchBase(input.benchAddress, input.consoleUrl);
 		bench = [
-			{ label: 'Management API', value: `${url}/api/v1/`, note },
-			{ label: "Load tests' mock", value: `${url}/load-mock/` },
-			{ label: 'Data plane', value: `${url}/v1` }
+			{ label: 'Management API, as the benchmark reaches it', value: url, note },
+			{
+				label: 'The mock, as that gateway reaches it',
+				value: BENCH_MOCK_FOR_GATEWAY,
+				note: 'In the gateway alone: PGW_EGRESS_ALLOW_PRIVATE and PGW_TOOL_EGRESS_ALLOW_PRIVATE must list it.'
+			},
+			{ label: 'The same mock, as the agents reach it', value: `${url}/load-mock` },
+			{ label: 'Data plane, as the agents reach it', value: url },
+			{ label: 'Its console, for links to published reports', value: input.consoleUrl }
 		];
 	}
 
@@ -173,6 +198,17 @@ function warningsOf(
 	if (grafanaUnderConsole && grafana && grafana !== hostOf(input.consoleUrl))
 		warnings.push(
 			`Grafana's address names ${grafana}, not the console's host: its links and its sign-in lead there.`
+		);
+	// The benchmark's cells call the mock through the gateway, which refuses private hosts it
+	// does not list.
+	const mockHost = hostOf(BENCH_MOCK_FOR_GATEWAY);
+	if (input.benchAddress && !input.egressModels.includes(mockHost))
+		warnings.push(
+			`${mockHost} is not in PGW_EGRESS_ALLOW_PRIVATE: the benchmark's cells fail with an egress error.`
+		);
+	if (input.benchAddress && !input.egressTools.includes(mockHost))
+		warnings.push(
+			`${mockHost} is not in PGW_TOOL_EGRESS_ALLOW_PRIVATE: the benchmark's mcp and a2a cells fail.`
 		);
 	if (input.benchAddress && admitsEveryone(input.adminCidrs))
 		warnings.push(

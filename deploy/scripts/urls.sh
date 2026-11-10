@@ -121,19 +121,27 @@ if mine pacod-grafana; then
     row "Grafana" "$g, user $(env_of pacod-grafana GF_SECURITY_ADMIN_USER | grep . || echo admin)"
 fi
 
-# The management API and the load tests' mock on the API site's port 8088 (docker-compose.bench.yml).
+# The management API and the load tests' mock on the API site's port 8088
+# (docker-compose.bench.yml), as the fields of pacod-benchmark's gateway form want them: each
+# value pasted as it is. Its mock, as the gateway reaches it, is the one Caddy's /load-mock/
+# route leads to (gw_load_mock in platform/caddy/gw.caddy), so that the baselines and the cells
+# call the same mock.
+BENCH=
 case "$(env_of pacod-caddy GW_API_EXTRA)" in
-    *gw_benchmark*)
-        b=$(published pacod-caddy 8088)
-        if [ -n "$b" ]; then
-            b="http://$(reach "$b")"
-            echo ""
-            echo "  For a benchmark on another machine (BENCH=1): plain HTTP, from PGW_ADMIN_ALLOW_CIDRS only"
-            row "Management API" "$b/api/v1/"
-            row "Load tests' mock" "$b/load-mock/"
-            row "Data plane" "$b/v1"
-        fi ;;
+    *gw_benchmark*) BENCH=$(published pacod-caddy 8088) ;;
 esac
+if [ -n "$BENCH" ]; then
+    b="http://$(reach "$BENCH")"
+    wide() { printf '  %-38s %s\n' "$1" "$2"; }
+    echo ""
+    echo "  pacod-benchmark on another machine (BENCH=1), its gateway form. Plain HTTP, for"
+    echo "  PGW_ADMIN_ALLOW_CIDRS only; the token is a platform admin's (its runbook, section 3)."
+    wide "Management API" "$b"
+    wide "The mock, as the gateway reaches it" "http://gw-load-mock:9000"
+    wide "The same mock, as the agents reach it" "$b/load-mock"
+    wide "Data plane, as the agents reach it" "$b"
+    wide "Its console" "$(sites "$CONSOLE_SITE" | head -n 1)"
+fi
 
 # Every other published port: in the development stack nearly every service, in production
 # only what the hub layout offers its gateways (PostgreSQL, analytics, OTLP, Valkey).
@@ -239,6 +247,18 @@ if [ -n "$GRAFANA_HOST" ]; then
         *)
             warn "Grafana's address (GRAFANA_ROOT_URL) names $GRAFANA_HOST, not the console's host:"
             echo "           its links and its sign-in lead there" ;;
+    esac
+fi
+# The benchmark's cells call gw-load-mock through the gateway, which refuses private hosts it
+# does not list.
+if [ -n "$BENCH" ]; then
+    case ",$(env_of pacod-gw PGW_EGRESS_ALLOW_PRIVATE | tr -d ' ')," in
+        *,gw-load-mock,*) ;;
+        *) warn "gw-load-mock is not in PGW_EGRESS_ALLOW_PRIVATE: the benchmark's cells fail with an egress error" ;;
+    esac
+    case ",$(env_of pacod-gw PGW_TOOL_EGRESS_ALLOW_PRIVATE | tr -d ' ')," in
+        *,gw-load-mock,*) ;;
+        *) warn "gw-load-mock is not in PGW_TOOL_EGRESS_ALLOW_PRIVATE: the benchmark's mcp and a2a cells fail" ;;
     esac
 fi
 case "$(env_of pacod-caddy GW_API_EXTRA)" in

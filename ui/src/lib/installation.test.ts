@@ -42,10 +42,13 @@ describe('installation', () => {
 		expect(value(i.addresses, 'Data plane')).toEqual(['https://api.ctest.local']);
 		expect(i.addresses.find((f) => f.label === 'Data plane')?.note).toBe(DATA_PLANE_PATHS);
 		expect(value(i.addresses, 'Identity (pacod-id)')).toEqual(['https://id.ctest.lan']);
-		expect(i.bench?.map((f) => f.value)).toEqual([
-			'http://<this host>:8088/api/v1/',
-			'http://<this host>:8088/load-mock/',
-			'http://<this host>:8088/v1'
+		// pacod-benchmark's gateway form, field by field; on every interface, by the console's name.
+		expect(i.bench?.map((f) => [f.label, f.value])).toEqual([
+			['Management API, as the benchmark reaches it', 'http://console.ctest.local:8088'],
+			['The mock, as that gateway reaches it', 'http://gw-load-mock:9000'],
+			['The same mock, as the agents reach it', 'http://console.ctest.local:8088/load-mock'],
+			['Data plane, as the agents reach it', 'http://console.ctest.local:8088'],
+			['Its console, for links to published reports', 'https://console.ctest.local']
 		]);
 		expect(i.bench?.[0].note).toContain('every interface');
 		expect(value(i.settings, 'Sign-in')).toEqual(['Through pacod-id (PGW_AUTH=oidc)']);
@@ -105,13 +108,32 @@ describe('installation', () => {
 		expect(value(i.settings, 'Certificates')).toEqual(["Let's Encrypt, account ops@example.com"]);
 	});
 
-	it('marks a benchmark port bound to this host alone', () => {
-		const i = installation({ ...DEV, benchAddress: '127.0.0.1:8088' });
-		expect(i.bench?.[0]).toEqual({
-			label: 'Management API',
-			value: 'http://127.0.0.1:8088/api/v1/',
-			note: 'this host alone (PGW_BENCH_BIND)'
-		});
+	it('marks a benchmark port bound to this host alone, and names a private address as it is', () => {
+		const local = installation({ ...CTEST, benchAddress: '127.0.0.1:8088' });
+		expect(local.bench?.[0].value).toBe('http://127.0.0.1:8088');
+		expect(local.bench?.[0].note).toContain('another machine cannot reach it');
+		const lan = installation({ ...CTEST, benchAddress: '10.0.0.150:8088' });
+		expect(lan.bench?.[2].value).toBe('http://10.0.0.150:8088/load-mock');
+	});
+
+	it('warns when the gateway may not call the benchmark mock', () => {
+		const warnings = (models: string[], tools: string[]) =>
+			installation({ ...CTEST, egressModels: models, egressTools: tools }).warnings.filter((w) =>
+				w.startsWith('gw-load-mock')
+			);
+		expect(warnings(['gw-load-mock'], ['gw-load-mock'])).toEqual([]);
+		expect(warnings([], ['gw-load-mock'])).toEqual([
+			"gw-load-mock is not in PGW_EGRESS_ALLOW_PRIVATE: the benchmark's cells fail with an egress error."
+		]);
+		expect(warnings(['gw-load-mock'], ['gw-mock'])).toEqual([
+			"gw-load-mock is not in PGW_TOOL_EGRESS_ALLOW_PRIVATE: the benchmark's mcp and a2a cells fail."
+		]);
+		// Without BENCH=1 nothing calls it.
+		expect(
+			installation({ ...DEV, egressModels: [], egressTools: [] }).warnings.filter((w) =>
+				w.startsWith('gw-load-mock')
+			)
+		).toEqual([]);
 	});
 });
 

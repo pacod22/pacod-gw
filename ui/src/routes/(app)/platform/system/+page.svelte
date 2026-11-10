@@ -90,8 +90,12 @@
 						)}{/each}
 				</dl>
 				{#if installation.bench}
-					<h3>For a benchmark on another machine</h3>
-					<p class="muted small">Plain HTTP, for the admin addresses only (BENCH=1).</p>
+					<h3>pacod-benchmark on another machine</h3>
+					<p class="muted small">
+						The fields of its gateway form, each value to paste as it is (BENCH=1). Plain HTTP, for
+						the admin addresses only. The token is a platform admin's of this gateway
+						(pacod-benchmark's runbook, section 3).
+					</p>
 					<dl class="facts">
 						{#each installation.bench as fact (fact.label)}{@render factRow(fact)}{/each}
 					</dl>
