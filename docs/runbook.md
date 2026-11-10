@@ -393,7 +393,7 @@ console reads them from its own settings, which compose fills from `deploy/.env`
 |---|---|---|
 | `PGW_API_URL` | `docker-compose.standalone.yml`: `PGW_API_URL`, or `https://<PGW_API_HOST>` | The data plane's addresses, separated by spaces; a host name stands for `https://<host>`. Set `PGW_API_URL` when Caddy is not on 443. |
 | `PGW_TLS`, `PGW_ADMIN_ALLOW_CIDRS` | `docker-compose.standalone.yml`, the values Caddy has | Where the certificates come from, and who reaches Grafana and the API site's further routes. |
-| `PGW_BENCH_ADDRESS` | `docker-compose.bench.yml`: `PGW_BENCH_BIND:PGW_BENCH_PORT` | The management API and the load tests' mock for a benchmark on another machine. |
+| `PGW_BENCH_ADDRESS` | `docker-compose.bench.yml`: `PGW_BENCH_BIND:PGW_BENCH_PORT` | The fields of pacod-benchmark's gateway form, for a benchmark on another machine. Bound to `0.0.0.0`, the port is named by the console's host, since Caddy's site there answers every host name. |
 
 The console never calls these addresses. The private hosts come from the core
 (`GET /system/status`), the load agents from the tester. In the full stack the page shows
@@ -1341,7 +1341,9 @@ TESTER_LOAD_TOKEN=...                    # the load overlay needs it (section 3)
 ```
 
 then `make up LOAD_TEST=1 BENCH=1`. Mint a platform-admin token for the benchmark (its runbook,
-section 3) and give it, in pacod-benchmark, these addresses:
+section 3) and give it, in pacod-benchmark, these addresses. `make up` ends by printing them for
+this host, field by field of pacod-benchmark's gateway form, and Platform → System lists them
+too (section 15):
 
 | pacod-benchmark | Value |
 |---|---|
@@ -2870,10 +2872,10 @@ Once the stack is up, `up` prints its addresses and main settings. `make urls`
 
 | Part | What |
 |---|---|
-| Addresses | The console, the data plane, pacod-id and Grafana. With `BENCH=1`, the management API, the load tests' mock and the data plane on port 8088. Every other published port, which in production is only what the hub file offers. |
+| Addresses | The console, the data plane, pacod-id and Grafana. With `BENCH=1`, the fields of pacod-benchmark's gateway form, each value to paste as it is: the management API, the mock as the gateway reaches it (`http://gw-load-mock:9000`) and as the agents reach it (`/load-mock` on port 8088), the data plane and the console. Every other published port, which in production is only what the hub file offers. |
 | Sign-in | `PGW_AUTH`, the first administrator's address, and the variable in `deploy/.env` that holds the password. The password itself is printed only for the development stack, whose password is fixed. |
 | Settings | Where the certificates come from, the gateways behind Caddy, the Testing page's modes, the load agents, `PGW_EGRESS_ALLOW_PRIVATE`, `PGW_TOOL_EGRESS_ALLOW_PRIVATE` and `PGW_ADMIN_ALLOW_CIDRS`. |
-| Warnings | A host name ending in `.local`, which macOS and many Linux machines look up by multicast DNS, not through the network's DNS server. A `GRAFANA_ROOT_URL` on another host than the console's. A management API on the API site that admits every address. |
+| Warnings | A host name ending in `.local`, which macOS and many Linux machines look up by multicast DNS, not through the network's DNS server. A `GRAFANA_ROOT_URL` on another host than the console's. A management API on the API site that admits every address. With `BENCH=1`, `gw-load-mock` missing from `PGW_EGRESS_ALLOW_PRIVATE` or `PGW_TOOL_EGRESS_ALLOW_PRIVATE`. |
 
 The script reads the running containers of the compose project `pacod-gw`, not `deploy/.env`.
 It therefore shows what compose made of the files, the overlays and the defaults, and it reads
