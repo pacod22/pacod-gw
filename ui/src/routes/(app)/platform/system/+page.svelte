@@ -5,6 +5,7 @@
 	import PageHeader from '#lib/components/PageHeader.svelte';
 	import ProblemNotice from '#lib/components/ProblemNotice.svelte';
 	import { formatDateTime, formatMs } from '#lib/format.ts';
+	import type { Fact } from '#lib/installation.ts';
 	import { formatValue } from '#lib/report/format.ts';
 	import type { PageProps } from './$types';
 
@@ -66,6 +67,72 @@
 				<dd>{status.instances_current} of {status.instances.length}</dd>
 			</dl>
 		</section>
+
+		{#if data.installation}
+			{@const installation = data.installation}
+			<section class="card stack">
+				<h2>Addresses and settings</h2>
+				<p class="muted">
+					What this installation was started with, as the console and the core know it. On the host, <code
+						>make urls</code
+					> prints the same from the running containers.
+				</p>
+				{#if installation.warnings.length > 0}
+					<Notice tone="warning" title="Settings to check">
+						<ul class="problems">
+							{#each installation.warnings as warning (warning)}<li>{warning}</li>{/each}
+						</ul>
+					</Notice>
+				{/if}
+				<dl class="facts">
+					{#each installation.addresses as fact (fact.label + fact.value)}{@render factRow(
+							fact
+						)}{/each}
+				</dl>
+				{#if installation.bench}
+					<h3>For a benchmark on another machine</h3>
+					<p class="muted small">Plain HTTP, for the admin addresses only (BENCH=1).</p>
+					<dl class="facts">
+						{#each installation.bench as fact (fact.label)}{@render factRow(fact)}{/each}
+					</dl>
+				{/if}
+				<h3>Settings</h3>
+				<dl class="facts">
+					{#each installation.settings as fact (fact.label)}{@render factRow(fact)}{/each}
+					{#if data.loadTests}
+						<dt>Load tests</dt>
+						<dd>
+							{#await data.loadTests}
+								<span class="muted">Asking the load agents…</span>
+							{:then load}
+								{#if !load}
+									<span class="muted">The tester did not answer.</span>
+								{:else if !load.configured}
+									<span class="muted">Not set up</span>
+									<span class="muted small note">TESTER_LOAD_AGENTS (make up LOAD_TEST=1)</span>
+								{:else}
+									<span class="agents">
+										{#each load.agents as agent (agent.name)}
+											<span class="agent">
+												<span class="mono">{agent.name}</span>
+												<Badge
+													value={agent.reachable ? 'reachable' : 'not reachable'}
+													tone={agent.reachable ? 'good' : 'bad'}
+												/>
+											</span>
+										{/each}
+									</span>
+									<span class="muted small note">
+										The mock target is {load.mock_available ? 'available' : 'not set up'}.
+										<a href="/platform/testing/load">Load tests</a>
+									</span>
+								{/if}
+							{/await}
+						</dd>
+					{/if}
+				</dl>
+			</section>
+		{/if}
 
 		<section class="stack">
 			<h2>Components</h2>
@@ -156,6 +223,20 @@
 		{/if}
 	{/if}
 
+	{#snippet factRow(fact: Fact)}
+		<dt>{fact.label}</dt>
+		<dd>
+			{#if !fact.value}
+				<span class="muted">Not set</span>
+			{:else if fact.link}
+				<a class="mono" href={fact.value} target="_blank" rel="noreferrer">{fact.value}</a>
+			{:else}
+				<span class="mono">{fact.value}</span>
+			{/if}
+			{#if fact.note}<span class="muted small note">{fact.note}</span>{/if}
+		</dd>
+	{/snippet}
+
 	{#snippet instanceCell(instance: Row, column: { key: string })}
 		{#if column.key === 'id'}
 			<span class="applied">
@@ -202,6 +283,27 @@
 	}
 
 	.applied {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	/* A note goes under its value, and a long address may break anywhere. */
+	.note {
+		display: block;
+	}
+
+	dd .mono {
+		overflow-wrap: anywhere;
+	}
+
+	.agents {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: var(--space-3);
+	}
+
+	.agent {
 		display: inline-flex;
 		align-items: center;
 		gap: var(--space-2);

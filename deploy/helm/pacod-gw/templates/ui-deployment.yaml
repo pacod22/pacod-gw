@@ -82,6 +82,12 @@ spec:
             - name: GRAFANA_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.ingress.enabled }}
+            # The data plane as applications reach it, shown to platform admins on the System
+            # page. The console never calls it.
+            - name: PGW_API_URL
+              value: {{ printf "https://%s" .Values.ingress.api.host | quote }}
+            {{- end }}
             {{- if .Values.tester.enabled }}
             # The tester, for the Testing page. Called from the server side of the console only.
             - name: TESTER_URL

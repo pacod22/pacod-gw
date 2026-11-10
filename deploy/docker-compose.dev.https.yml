@@ -47,3 +47,10 @@ services:
     environment:
       # The links in account emails point at the console's HTTPS address.
       PGW_CONSOLE_URL: ${PGW_CONSOLE_URL:-https://console.localhost}
+
+  # The System page: the data plane on the HTTPS site as well, with Caddy's own certificates
+  # (Caddyfile.dev). A host name stands for https://<host>.
+  gw-console:
+    environment:
+      PGW_API_URL: "http://127.0.0.1:18080 ${PGW_DEV_API_HOST:-api.localhost}"
+      PGW_TLS: internal

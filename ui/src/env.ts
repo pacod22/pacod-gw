@@ -18,6 +18,31 @@ function optionalUrl(name: string, example: string) {
 	};
 }
 
+/**
+ * Optional addresses separated by spaces, each a URL or a host name; a host name stands for
+ * https://<host>, as Caddy's site addresses do.
+ */
+function optionalAddresses(name: string, example: string) {
+	return (value: string | undefined) => {
+		const entries = (value ?? '').trim().split(/\s+/).filter(Boolean);
+		for (const entry of entries) {
+			let url: URL;
+			try {
+				url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `https://${entry}`);
+			} catch {
+				throw new Error(`${name} must hold URLs or host names such as ${example}, got "${entry}"`);
+			}
+			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+				throw new Error(`${name}: "${entry}" must start with http:// or https://`);
+			}
+		}
+		return entries.length > 0 ? entries.join(' ') : undefined;
+	};
+}
+
+/** An optional plain setting: trimmed, undefined when empty. */
+const optionalText = (value: string | undefined) => (value ?? '').trim() || undefined;
+
 /** An optional secret: trimmed, empty when unset. */
 const secret = (value: string | undefined) => (value ?? '').trim() || undefined;
 
@@ -85,6 +110,26 @@ export const variables = defineEnvVars({
 		description:
 			"Address of pacod-benchmark's UI as the browser reaches it, such as https://bench.example.com. Optional: the Benchmarks page links to it when it is set. The console only links to it; reports come to the core.",
 		schema: optionalUrl('BENCH_URL', 'https://bench.example.com')
+	},
+	PGW_API_URL: {
+		description:
+			'The data plane as applications reach it, such as https://api.example.com; several separated by spaces. Optional: the System page shows it to platform admins and says it is not set otherwise. The console never calls it.',
+		schema: optionalAddresses('PGW_API_URL', 'https://api.example.com')
+	},
+	PGW_TLS: {
+		description:
+			"Where the edge's certificates come from, as deploy/.env says it: internal (Caddy's own authority) or the e-mail address of a Let's Encrypt account. Optional, shown on the System page.",
+		schema: optionalText
+	},
+	PGW_ADMIN_ALLOW_CIDRS: {
+		description:
+			"The addresses the edge lets through to Grafana and to the API site's further routes, separated by spaces. Optional, shown on the System page.",
+		schema: optionalText
+	},
+	PGW_BENCH_ADDRESS: {
+		description:
+			"Where the edge offers the management API and the load tests' mock to a benchmark on another machine (docker-compose.bench.yml), as <address>:<port>. Optional, shown on the System page.",
+		schema: optionalText
 	},
 	PGW_AUTH: {
 		description:

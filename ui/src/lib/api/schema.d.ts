@@ -7251,6 +7251,13 @@ export interface components {
             components: components["schemas"]["Component"][];
             /** @description Configuration objects that could not be used. */
             problems: string[];
+            /**
+             * @description The private hosts and ranges this instance lets calls to models reach
+             *     (`PGW_EGRESS_ALLOW_PRIVATE`). Another instance may have been started with others.
+             */
+            egress_allow_private: string[];
+            /** @description The same for tool servers and remote agents (`PGW_TOOL_EGRESS_ALLOW_PRIVATE`). */
+            tool_egress_allow_private: string[];
         };
         /** @description A running core instance as recorded in the database. */
         InstanceRow: {

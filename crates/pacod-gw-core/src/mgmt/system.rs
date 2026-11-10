@@ -52,6 +52,11 @@ pub struct SystemStatus {
     pub components: Vec<Component>,
     /// Configuration objects that could not be used.
     pub problems: Vec<String>,
+    /// The private hosts and ranges this instance lets calls to models reach
+    /// (`PGW_EGRESS_ALLOW_PRIVATE`). Another instance may have been started with others.
+    pub egress_allow_private: Vec<String>,
+    /// The same for tool servers and remote agents (`PGW_TOOL_EGRESS_ALLOW_PRIVATE`).
+    pub tool_egress_allow_private: Vec<String>,
 }
 
 async fn status(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<SystemStatus>> {
@@ -97,6 +102,8 @@ async fn status(State(st): State<AdminState>, p: Principal) -> ApiResult<Json<Sy
         stopped_instances,
         components,
         problems: snap.problems.clone(),
+        egress_allow_private: st.boot.egress_allow_private.clone(),
+        tool_egress_allow_private: st.boot.tool_egress_allow_private.clone(),
     }))
 }
 

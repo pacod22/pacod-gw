@@ -43,6 +43,11 @@ services:
     # clients, as the console does.
     networks: [pacod-net, pacod-admin-net]
 
+  # The System page shows platform admins where the benchmark finds these routes.
+  gw-console:
+    environment:
+      PGW_BENCH_ADDRESS: ${PGW_BENCH_BIND:-127.0.0.1}:${PGW_BENCH_PORT:-8088}
+
 networks:
   pacod-admin-net:
     external: true

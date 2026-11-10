@@ -385,6 +385,21 @@ With `PGW_TLS=internal`, clients do not trust the certificate. Either pass the r
 certificate to them (`dc exec pacod-caddy cat /data/caddy/pki/authorities/local/root.crt`) or use
 `curl -k` for a test.
 
+Platform → System then shows platform admins the installation's addresses and main settings,
+and warns about the settings that keep people from reaching it (section 15, `make urls`). The
+console reads them from its own settings, which compose fills from `deploy/.env`:
+
+| Variable of the console | Set by | What |
+|---|---|---|
+| `PGW_API_URL` | `docker-compose.standalone.yml`: `PGW_API_URL`, or `https://<PGW_API_HOST>` | The data plane's addresses, separated by spaces; a host name stands for `https://<host>`. Set `PGW_API_URL` when Caddy is not on 443. |
+| `PGW_TLS`, `PGW_ADMIN_ALLOW_CIDRS` | `docker-compose.standalone.yml`, the values Caddy has | Where the certificates come from, and who reaches Grafana and the API site's further routes. |
+| `PGW_BENCH_ADDRESS` | `docker-compose.bench.yml`: `PGW_BENCH_BIND:PGW_BENCH_PORT` | The management API and the load tests' mock for a benchmark on another machine. |
+
+The console never calls these addresses. The private hosts come from the core
+(`GET /system/status`), the load agents from the tester. In the full stack the page shows
+what that stack gives the console, and says "not set" for the rest. Under Helm,
+`PGW_API_URL` is `https://<ingress.api.host>`.
+
 **Step 8. Set up the gateway in the console.** Add a provider from its preset and give it
 its API key (see "Setting up each provider" at the end of this section), activate a model,
 create an organisation and a workspace, and create a gateway key. Applications then call
@@ -2840,7 +2855,7 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 | `LOAD_TEST=1` with `up`, `scale-up` or `hub-up` (and the matching `down`) | Adds `docker-compose.load.yml`: a load agent and the load tests' mock in the stack. | Section 9 |
 | `BENCH=1` with `LOAD_TEST=1` and `up`, `scale-up` or `hub-up` (and the matching `down`) | Adds `docker-compose.bench.yml`: Caddy's API site, with the management API and the load tests' mock for `PGW_ADMIN_ALLOW_CIDRS`, on `PGW_BENCH_BIND:PGW_BENCH_PORT`, for a pacod-benchmark on another machine. Refused without `LOAD_TEST=1`. | Section 9 |
 | `make load-agent-up`, `make load-agent-down` | On another machine: a load agent for the central tester. | Section 9 |
-| `make urls` | Prints the running stack's addresses and main settings. `up`, `scale-up`, `hub-up`, `dev-up` and `dev-scale-up` end with it. | Below |
+| `make urls` | Prints the running stack's addresses and main settings. `up`, `scale-up`, `hub-up`, `dev-up` and `dev-scale-up` end with it. Platform → System in the console shows them as well (section 4, step 7). | Below |
 | `make backup` | Backs up PostgreSQL and ClickHouse (`deploy/scripts/backup.sh`). | Section 7 |
 | `make lite-up`, `make lite-down`, `make lite-check` | The minimal gateway, configured by `deploy/lite/.env`; `lite-check` shows what it reads, without secrets. | Section 17 |
 

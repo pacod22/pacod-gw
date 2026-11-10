@@ -391,6 +391,9 @@ services:
       PROMETHEUS_URL: http://pacod-prometheus:9090
       # Grafana as the browser reaches it, for a link on the Monitoring page; empty hides it.
       GRAFANA_URL: ${PGW_GRAFANA_URL:-}
+      # The data plane as applications reach it, shown to platform admins on the System page.
+      # Empty here: the standalone file builds it from PGW_API_HOST, the full stack sets it.
+      PGW_API_URL: ${PGW_API_URL:-}
       # The tester, for the console's Testing page; also server side only. The console starts
       # without it: the page then says that testing is not reachable.
       TESTER_URL: http://gw-tester:8095
