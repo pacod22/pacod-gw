@@ -100,6 +100,15 @@ services:
       resources:
         limits: { cpus: "0.25", memory: 128M }
 
+  # What the System page shows: the development addresses, never those of deploy/.env. No
+  # certificates on plain HTTP, and the management API is published on 18081 rather than on
+  # Caddy's API site. docker-compose.dev.https.yml adds the HTTPS sites.
+  gw-console:
+    environment:
+      PGW_API_URL: http://127.0.0.1:18080
+      PGW_TLS: ""
+      PGW_ADMIN_ALLOW_CIDRS: ""
+
   pacod-caddy:
     # Plain HTTP on 13000 in front of the console. Ports 80 and 443 stay free unless
     # docker-compose.dev.https.yml is added ("make dev-up DEV_HTTPS=1").

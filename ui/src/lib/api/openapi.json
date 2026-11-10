@@ -28251,6 +28251,20 @@
               "type": "string"
             },
             "description": "Configuration objects that could not be used."
+          },
+          "egress_allow_private": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The private hosts and ranges this instance lets calls to models reach\n(`PGW_EGRESS_ALLOW_PRIVATE`). Another instance may have been started with others."
+          },
+          "tool_egress_allow_private": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The same for tool servers and remote agents (`PGW_TOOL_EGRESS_ALLOW_PRIVATE`)."
           }
         },
         "required": [
@@ -28264,7 +28278,9 @@
           "instances_current",
           "stopped_instances",
           "components",
-          "problems"
+          "problems",
+          "egress_allow_private",
+          "tool_egress_allow_private"
         ]
       },
       "InstanceRow": {

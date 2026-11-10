@@ -137,6 +137,9 @@ async fn concurrent_edits_are_detected_and_every_change_is_audited() {
     let (_, status) = gw.api("GET", "/system/status", None).await;
     let head = status["config_head"].as_i64().unwrap();
     assert_eq!(status["config_version"], head);
+    // The installation's private egress, as this instance was started with it, for the System page.
+    assert_eq!(status["egress_allow_private"], json!(["127.0.0.0/8", "localhost"]));
+    assert_eq!(status["tool_egress_allow_private"], json!(["127.0.0.0/8", "localhost"]));
     let (_, changes) = gw.api("GET", "/system/config-versions?limit=3", None).await;
     let c = changes.as_array().unwrap();
     assert_eq!(c[0]["version"], head);

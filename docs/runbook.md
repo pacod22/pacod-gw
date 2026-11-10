@@ -385,6 +385,21 @@ With `PGW_TLS=internal`, clients do not trust the certificate. Either pass the r
 certificate to them (`dc exec pacod-caddy cat /data/caddy/pki/authorities/local/root.crt`) or use
 `curl -k` for a test.
 
+Platform → System then shows platform admins the installation's addresses and main settings,
+and warns about the settings that keep people from reaching it (section 15, `make urls`). The
+console reads them from its own settings, which compose fills from `deploy/.env`:
+
+| Variable of the console | Set by | What |
+|---|---|---|
+| `PGW_API_URL` | `docker-compose.standalone.yml`: `PGW_API_URL`, or `https://<PGW_API_HOST>` | The data plane's addresses, separated by spaces; a host name stands for `https://<host>`. Set `PGW_API_URL` when Caddy is not on 443. |
+| `PGW_TLS`, `PGW_ADMIN_ALLOW_CIDRS` | `docker-compose.standalone.yml`, the values Caddy has | Where the certificates come from, and who reaches Grafana and the API site's further routes. |
+| `PGW_BENCH_ADDRESS` | `docker-compose.bench.yml`: `PGW_BENCH_BIND:PGW_BENCH_PORT` | The management API and the load tests' mock for a benchmark on another machine. |
+
+The console never calls these addresses. The private hosts come from the core
+(`GET /system/status`), the load agents from the tester. In the full stack the page shows
+what that stack gives the console, and says "not set" for the rest. Under Helm,
+`PGW_API_URL` is `https://<ingress.api.host>`.
+
 **Step 8. Set up the gateway in the console.** Add a provider from its preset and give it
 its API key (see "Setting up each provider" at the end of this section), activate a model,
 create an organisation and a workspace, and create a gateway key. Applications then call
@@ -1974,6 +1989,8 @@ COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.dev.yml:deploy/dock
 | pacod-id, metrics and probes | `http://127.0.0.1:19170/metrics` |
 | Mailpit, pacod-id's mail | `http://127.0.0.1:18025` |
 
+`make dev-up` ends by printing these addresses for the running stack (`make urls`, section 15).
+
 Console login: `admin@example.com`, password `pacod-gw-dev`. To send requests to the mock
 provider, add a provider in the console with the base URL `http://gw-mock:9000`. Its tool
 servers are registered as `http://gw-mock:9000/mcp` (2026-07-28) and
@@ -2838,6 +2855,7 @@ with `npm ci` done once in `ui/`) and `uv` for the tester.
 | `LOAD_TEST=1` with `up`, `scale-up` or `hub-up` (and the matching `down`) | Adds `docker-compose.load.yml`: a load agent and the load tests' mock in the stack. | Section 9 |
 | `BENCH=1` with `LOAD_TEST=1` and `up`, `scale-up` or `hub-up` (and the matching `down`) | Adds `docker-compose.bench.yml`: Caddy's API site, with the management API and the load tests' mock for `PGW_ADMIN_ALLOW_CIDRS`, on `PGW_BENCH_BIND:PGW_BENCH_PORT`, for a pacod-benchmark on another machine. Refused without `LOAD_TEST=1`. | Section 9 |
 | `make load-agent-up`, `make load-agent-down` | On another machine: a load agent for the central tester. | Section 9 |
+| `make urls` | Prints the running stack's addresses and main settings. `up`, `scale-up`, `hub-up`, `dev-up` and `dev-scale-up` end with it. Platform → System in the console shows them as well (section 4, step 7). | Below |
 | `make backup` | Backs up PostgreSQL and ClickHouse (`deploy/scripts/backup.sh`). | Section 7 |
 | `make lite-up`, `make lite-down`, `make lite-check` | The minimal gateway, configured by `deploy/lite/.env`; `lite-check` shows what it reads, without secrets. | Section 17 |
 
@@ -2846,6 +2864,22 @@ The targets read their settings from `deploy/.env`; `node-up` and `node-down` re
 become healthy. `down` stops and removes the containers and keeps the volumes, so the data
 stays. Stop a layout with the target that started it: `make down` does not know the gateways
 of the scale layout and leaves them running.
+
+Once the stack is up, `up` prints its addresses and main settings. `make urls`
+(`deploy/scripts/urls.sh`) prints them again at any time:
+
+| Part | What |
+|---|---|
+| Addresses | The console, the data plane, pacod-id and Grafana. With `BENCH=1`, the management API, the load tests' mock and the data plane on port 8088. Every other published port, which in production is only what the hub file offers. |
+| Sign-in | `PGW_AUTH`, the first administrator's address, and the variable in `deploy/.env` that holds the password. The password itself is printed only for the development stack, whose password is fixed. |
+| Settings | Where the certificates come from, the gateways behind Caddy, the Testing page's modes, the load agents, `PGW_EGRESS_ALLOW_PRIVATE`, `PGW_TOOL_EGRESS_ALLOW_PRIVATE` and `PGW_ADMIN_ALLOW_CIDRS`. |
+| Warnings | A host name ending in `.local`, which macOS and many Linux machines look up by multicast DNS, not through the network's DNS server. A `GRAFANA_ROOT_URL` on another host than the console's. A management API on the API site that admits every address. |
+
+The script reads the running containers of the compose project `pacod-gw`, not `deploy/.env`.
+It therefore shows what compose made of the files, the overlays and the defaults, and it reads
+only variables that hold no secret. It exits with 1 when the stack is not running. pacod-demo
+and pacod-benchmark have containers of the same names, so the script names the project that
+owns `pacod-caddy` instead.
 
 A first deployment with make, after section 3:
 

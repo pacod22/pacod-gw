@@ -66,6 +66,14 @@ services:
       PGW_SMTP_USERNAME: ${PGW_SMTP_USERNAME:-}
       PGW_EMAIL_FROM_ADDRESS: ${PGW_EMAIL_FROM_ADDRESS:-}
 
+  # The console's System page shows platform admins what Caddy below serves and how
+  # (platform/caddy/gw.caddy). The console never calls these addresses.
+  gw-console:
+    environment:
+      PGW_API_URL: ${PGW_API_URL:-https://${PGW_API_HOST:-api.localhost}}
+      PGW_TLS: ${PGW_TLS:-internal}
+      PGW_ADMIN_ALLOW_CIDRS: ${PGW_ADMIN_ALLOW_CIDRS:-127.0.0.1/32}
+
   # ------------------------------------------------------------------------------------------
   # PostgreSQL
   # ------------------------------------------------------------------------------------------

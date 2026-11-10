@@ -52,6 +52,7 @@ make verify          # every check before a commit: fmt, clippy -D warnings, all
 make deploy-check    # static checks of deploy/
 
 make dev-up          # the full stack from the working tree, with the mock provider
+make urls            # the running stack's addresses and settings; up and dev-up (and scale, hub) end with it
 make smoke-mock      # end-to-end flow against it
 
 make lite-dev-up     # the minimal gateway from the working tree, with its mock (18280, 19280); not with dev-up

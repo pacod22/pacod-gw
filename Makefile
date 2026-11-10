@@ -5,7 +5,7 @@
 	hub-up hub-down node-up node-down deny \
 	authz authz-check vendor-pacod-id vendor-pacod-broker vendor-pacod-aggregator \
 	run-lite lite-up lite-down lite-check lite-dev-up lite-dev-down lite-smoke lite-live \
-	load-agent-up load-agent-down load-agent-dev-up load-agent-dev-down
+	load-agent-up load-agent-down load-agent-dev-up load-agent-dev-down urls
 
 # Tag of the images built by "make images"; the same value as PGW_VERSION in deploy/.env.
 VERSION ?= 0.1.0
@@ -177,14 +177,22 @@ ui-build:
 # The production stack. Needs deploy/.env (see deploy/.env.example) and the images.
 up: network
 	$(COMPOSE) $(LOAD_TEST_FILE) $(BENCH_FILE) up -d --wait
+	@$(MAKE) --no-print-directory urls
 
 down:
 	$(COMPOSE) $(LOAD_TEST_FILE) $(BENCH_FILE) down
+
+# The addresses and the main settings of the running stack, in any of its layouts: what up,
+# dev-up and the scale and hub targets end with. Read from the running containers; no secret is
+# printed.
+urls:
+	@sh deploy/scripts/urls.sh
 
 # The development stack: builds the images, adds the mock provider, needs no deploy/.env.
 # DEV_HTTPS=1 adds ports 80 and 443.
 dev-up: network
 	$(COMPOSE_DEV) $(DEV_HTTPS_FILE) up -d --build --wait
+	@$(MAKE) --no-print-directory urls
 
 dev-down:
 	$(COMPOSE_DEV) down
@@ -192,6 +200,7 @@ dev-down:
 # The production stack with two gateways and a separate management instance.
 scale-up: network
 	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) $(BENCH_FILE) up -d --wait
+	@$(MAKE) --no-print-directory urls
 
 scale-down:
 	$(COMPOSE_SCALE) $(LOAD_TEST_FILE) $(BENCH_FILE) down
@@ -199,6 +208,7 @@ scale-down:
 # The central host when gateways on other machines join (docs/runbook.md, section 9).
 hub-up: network
 	$(COMPOSE_HUB) $(LOAD_TEST_FILE) $(BENCH_FILE) up -d --wait
+	@$(MAKE) --no-print-directory urls
 
 hub-down:
 	$(COMPOSE_HUB) $(LOAD_TEST_FILE) $(BENCH_FILE) down
@@ -214,6 +224,7 @@ node-down:
 # 18083, the management API on 18081. DEV_HTTPS=1 adds ports 80 and 443.
 dev-scale-up: network
 	$(COMPOSE_DEV_SCALE) $(DEV_HTTPS_FILE) up -d --build --wait
+	@$(MAKE) --no-print-directory urls
 
 dev-scale-down:
 	$(COMPOSE_DEV_SCALE) down
@@ -395,7 +406,7 @@ deploy-check:
 	@echo "== OpenTelemetry collector configuration"
 	docker run --rm -v "$(CURDIR)/deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro" $(OTELCOL_IMAGE) validate --config=/etc/otelcol/config.yaml
 	@echo "== shell scripts"
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/demote-db-role.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/postgres/id-db.sh platform/postgres/gw-db.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt $(SHELLCHECK_IMAGE) -x deploy/scripts/backup.sh deploy/scripts/restore.sh deploy/scripts/demote-db-role.sh deploy/scripts/lib.sh deploy/scripts/preflight.sh deploy/scripts/urls.sh deploy/postgres/id-db.sh platform/postgres/gw-db.sh scripts/smoke-live.sh scripts/smoke-lite.sh scripts/lite-live.sh scripts/record-fixtures.sh deploy/alertmanager/render.sh
 	@echo "== Helm chart"
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) lint pacod-gw -f pacod-gw/ci/test-values.yaml --strict
 	docker run --rm -v "$(CURDIR)/deploy/helm:/charts:ro" -w /charts $(HELM_IMAGE) template pacod-gw pacod-gw --namespace pacod-gw -f pacod-gw/ci/test-values.yaml \
